@@ -65,7 +65,7 @@ def server_tally_votes(session_id):
                 't': current_session['t']
             }, room=session_id)
             # Notify residents voting has ended and the outcome
-            socketio.emit('voting_ended', {'outcome': current_session['outcome']}, room=session_id, include_self=False)
+            socketio.emit('voting_ended', {'outcome': current_session['outcome']}, room=session_id, include_self=True)
         else:
             print(f"Attempted to tally for {session_id}, but not in voting status or session DNE.")
 
@@ -223,6 +223,7 @@ def handle_submit_vote(data):
                         current_session['timer_object'].cancel()
                         current_session['timer_object'] = None
                     server_tally_votes(session_id)
+                    # socketio.start_background_task(server_tally_votes, session_id)
             else:
                 emit('error', {'message': 'You have already voted.'})
         else:
