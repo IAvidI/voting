@@ -36,6 +36,7 @@
                 text-align: left;
             }
             .vote-buttons button {
+                /* Common styles for all vote buttons */
                 display: block;
                 width: 100%;
                 padding: 15px;
@@ -44,22 +45,42 @@
                 border-radius: 5px;
                 border: none;
                 cursor: pointer;
+                transition: background-color 0.2s ease, opacity 0.2s ease; /* Smooth transitions */
             }
-            .vote-buttons button:disabled {
-                background-color: #ccc;
-                cursor: not-allowed;
-            }
+
+            /* Active State Styles */
             #allowBtn {
-                background-color: #28a745;
+                background-color: #28a745; /* Green */
                 color: white;
             }
             #denyBtn {
-                background-color: #dc3545;
+                background-color: #dc3545; /* Red */
                 color: white;
             }
             #abstainBtn {
-                background-color: #ffc107;
+                background-color: #ffc107; /* Yellow */
                 color: black;
+            }
+
+            /* Hover State Styles for Active Buttons */
+            #allowBtn:not(:disabled):hover {
+                background-color: #218838; /* Darker green */
+            }
+            #denyBtn:not(:disabled):hover {
+                background-color: #c82333; /* Darker red */
+            }
+            #abstainBtn:not(:disabled):hover {
+                background-color: #e0a800; /* Darker yellow */
+            }
+
+            /* Disabled State Styles - Using IDs for specificity */
+            #allowBtn:disabled,
+            #denyBtn:disabled,
+            #abstainBtn:disabled {
+                background-color: #cccccc; /* Standard disabled gray */
+                color: #666666; /* Darker gray text for readability */
+                opacity: 0.65; /* Make them look faded */
+                cursor: not-allowed;
             }
             #statusMessage {
                 margin-top: 15px;
