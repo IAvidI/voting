@@ -45,6 +45,10 @@
                 border: none;
                 cursor: pointer;
             }
+            .vote-buttons button:disabled {
+                background-color: #ccc;
+                cursor: not-allowed;
+            }
             #allowBtn {
                 background-color: #28a745;
                 color: white;
@@ -60,6 +64,23 @@
             #statusMessage {
                 margin-top: 15px;
                 font-weight: bold;
+            }
+            #yourVoteDisplay {
+                margin-top: 10px;
+                font-style: italic;
+                color: #0056b3;
+            }
+            #outcomeDisplay {
+                margin-top: 20px;
+                margin-bottom: 15px;
+                font-size: 20px;
+                font-weight: bold;
+            }
+            .outcome-granted {
+                color: #28a745;
+            }
+            .outcome-denied {
+                color: #dc3545;
             }
             input[type="text"] {
                 padding: 10px;
@@ -88,6 +109,8 @@
             </div>
 
             <div id="votingSection" style="display: none">
+                <div id="outcomeDisplay"></div>
+                <div id="yourVoteDisplay"></div>
                 <h3>Visitor Information:</h3>
                 <div id="visitorInfo">
                     <p>
@@ -105,13 +128,17 @@
                 </div>
 
                 <div class="vote-buttons">
-                    <button id="allowBtn" onclick="sendVote('allow')">
+                    <button id="allowBtn" onclick="sendVote('allow')" disabled>
                         Allow Entry
                     </button>
-                    <button id="denyBtn" onclick="sendVote('deny')">
+                    <button id="denyBtn" onclick="sendVote('deny')" disabled>
                         Deny Entry
                     </button>
-                    <button id="abstainBtn" onclick="sendVote('abstain')">
+                    <button
+                        id="abstainBtn"
+                        onclick="sendVote('abstain')"
+                        disabled
+                    >
                         Abstain
                     </button>
                 </div>
@@ -128,6 +155,20 @@
             const nicknameSection = document.getElementById("nicknameSection");
             const votingSection = document.getElementById("votingSection");
             const statusMessage = document.getElementById("statusMessage");
+            const voteButtons = document.querySelectorAll(
+                ".vote-buttons button"
+            );
+            const yourVoteDisplay = document.getElementById("yourVoteDisplay");
+            const outcomeDisplay = document.getElementById("outcomeDisplay");
+            const visitorPurposeText =
+                document.getElementById("visitorPurposeText");
+            const visitorExtractedText = document.getElementById(
+                "visitorExtractedText"
+            );
+
+            function setVoteButtonsDisabled(disabled) {
+                voteButtons.forEach((b) => (b.disabled = disabled));
+            }
 
             function joinWithNickname() {
                 nickname = document
@@ -145,26 +186,25 @@
 
             socket.on("connect", () => {
                 statusMessage.textContent =
-                    "Connected to server. Enter nickname to join.";
+                    "Connected. Enter nickname to join session.";
+                setVoteButtonsDisabled(true); // Ensure buttons are disabled on fresh connect
             });
 
             socket.on("joined_successfully", (data) => {
                 statusMessage.textContent = `Joined session ${data.session_id} as ${data.nickname}. Waiting for vote...`;
                 nicknameSection.style.display = "none";
-                votingSection.style.display = "block"; // Show voting section, but buttons might be disabled until vote starts
-                document
-                    .querySelectorAll(".vote-buttons button")
-                    .forEach((b) => (b.disabled = true));
+                votingSection.style.display = "block";
+                yourVoteDisplay.textContent = ""; // Clear previous vote
+                outcomeDisplay.textContent = ""; // Clear previous outcome
+                setVoteButtonsDisabled(true); // Keep disabled until voting_started
             });
 
             socket.on("voting_started", (data) => {
-                document.getElementById("visitorPurposeText").textContent =
-                    data.visitor_purpose;
-                document.getElementById("visitorExtractedText").textContent =
-                    data.extracted_info;
-                document
-                    .querySelectorAll(".vote-buttons button")
-                    .forEach((b) => (b.disabled = false));
+                visitorPurposeText.textContent = data.visitor_purpose;
+                visitorExtractedText.textContent = data.extracted_info;
+                setVoteButtonsDisabled(false); // Enable voting buttons
+                yourVoteDisplay.textContent = ""; // Clear previous vote message
+                outcomeDisplay.textContent = ""; // Clear previous outcome
                 statusMessage.textContent =
                     "Voting is now open. Please cast your vote.";
             });
@@ -174,32 +214,38 @@
                     session_id: currentSessionId,
                     vote_type: voteType,
                 });
-                document
-                    .querySelectorAll(".vote-buttons button")
-                    .forEach((b) => (b.disabled = true));
-                statusMessage.textContent = `You voted to ${voteType.toUpperCase()}. Waiting for results...`;
+                setVoteButtonsDisabled(true);
+                yourVoteDisplay.textContent = `You voted: ${voteType.toUpperCase()}`;
+                statusMessage.textContent = `Your vote (${voteType.toUpperCase()}) was recorded. Waiting for results...`;
             }
 
             socket.on("vote_submitted_confirmation", (data) => {
-                // Already updated status in sendVote, could add more confirmation if needed
                 console.log("Vote confirmed by server:", data.status);
             });
 
             socket.on("voting_ended", (data) => {
-                statusMessage.textContent = `Voting has ended. Outcome: ${data.outcome}`;
-                document
-                    .querySelectorAll(".vote-buttons button")
-                    .forEach((b) => (b.disabled = true));
+                statusMessage.textContent = `Voting has ended.`;
+                outcomeDisplay.textContent = `Outcome: ${data.outcome}`;
+                if (data.outcome === "Access Granted") {
+                    outcomeDisplay.className = "outcome-granted";
+                } else {
+                    outcomeDisplay.className = "outcome-denied";
+                }
+                setVoteButtonsDisabled(true); // Ensure buttons are disabled
             });
 
             socket.on("error", (data) => {
                 statusMessage.textContent = `Error: ${data.message}`;
-                alert(`Error: ${data.message}`);
+                // Potentially re-enable buttons or handle state if error is recoverable for voting
             });
 
             socket.on("disconnect", () => {
                 statusMessage.textContent = "Disconnected from server.";
+                setVoteButtonsDisabled(true);
             });
+
+            // Initial state on page load
+            setVoteButtonsDisabled(true);
         </script>
     </body>
 </html>
