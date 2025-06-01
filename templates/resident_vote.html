@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <title>Resident Voting</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                margin: 20px;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                background-color: #f4f4f4;
+                color: #333;
+            }
+            .container {
+                background-color: #fff;
+                padding: 20px;
+                border-radius: 8px;
+                box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+                text-align: center;
+                max-width: 400px;
+                width: 90%;
+            }
+            h1 {
+                color: #0056b3;
+            }
+            #visitorInfo {
+                margin-bottom: 20px;
+                padding: 10px;
+                border: 1px solid #eee;
+                border-radius: 5px;
+                background-color: #e9f5ff;
+                text-align: left;
+            }
+            .vote-buttons button {
+                display: block;
+                width: 100%;
+                padding: 15px;
+                margin-bottom: 10px;
+                font-size: 18px;
+                border-radius: 5px;
+                border: none;
+                cursor: pointer;
+            }
+            #allowBtn {
+                background-color: #28a745;
+                color: white;
+            }
+            #denyBtn {
+                background-color: #dc3545;
+                color: white;
+            }
+            #abstainBtn {
+                background-color: #ffc107;
+                color: black;
+            }
+            #statusMessage {
+                margin-top: 15px;
+                font-weight: bold;
+            }
+            input[type="text"] {
+                padding: 10px;
+                margin-bottom: 15px;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                width: calc(100% - 22px);
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Cast Your Vote</h1>
+            <p>
+                Session ID: <span id="residentSessionId">{{ session_id }}</span>
+            </p>
+            <p>Your Name: <span id="myNickname"></span></p>
+
+            <div id="nicknameSection">
+                <input
+                    type="text"
+                    id="nicknameInput"
+                    placeholder="Enter your name/nickname"
+                />
+                <button onclick="joinWithNickname()">Join Session</button>
+            </div>
+
+            <div id="votingSection" style="display: none">
+                <h3>Visitor Information:</h3>
+                <div id="visitorInfo">
+                    <p>
+                        <strong>Purpose:</strong>
+                        <span id="visitorPurposeText"
+                            >Waiting for details...</span
+                        >
+                    </p>
+                    <p>
+                        <strong>Extracted by System:</strong>
+                        <span id="visitorExtractedText"
+                            >Waiting for details...</span
+                        >
+                    </p>
+                </div>
+
+                <div class="vote-buttons">
+                    <button id="allowBtn" onclick="sendVote('allow')">
+                        Allow Entry
+                    </button>
+                    <button id="denyBtn" onclick="sendVote('deny')">
+                        Deny Entry
+                    </button>
+                    <button id="abstainBtn" onclick="sendVote('abstain')">
+                        Abstain
+                    </button>
+                </div>
+            </div>
+            <p id="statusMessage"></p>
+        </div>
+
+        <script>
+            const socket = io();
+            const currentSessionId =
+                document.getElementById("residentSessionId").textContent;
+            let nickname = "";
+
+            const nicknameSection = document.getElementById("nicknameSection");
+            const votingSection = document.getElementById("votingSection");
+            const statusMessage = document.getElementById("statusMessage");
+
+            function joinWithNickname() {
+                nickname = document
+                    .getElementById("nicknameInput")
+                    .value.trim();
+                if (!nickname) {
+                    nickname = `Resident${Math.floor(Math.random() * 1000)}`;
+                }
+                document.getElementById("myNickname").textContent = nickname;
+                socket.emit("join_session_resident", {
+                    session_id: currentSessionId,
+                    nickname: nickname,
+                });
+            }
+
+            socket.on("connect", () => {
+                statusMessage.textContent =
+                    "Connected to server. Enter nickname to join.";
+            });
+
+            socket.on("joined_successfully", (data) => {
+                statusMessage.textContent = `Joined session ${data.session_id} as ${data.nickname}. Waiting for vote...`;
+                nicknameSection.style.display = "none";
+                votingSection.style.display = "block"; // Show voting section, but buttons might be disabled until vote starts
+                document
+                    .querySelectorAll(".vote-buttons button")
+                    .forEach((b) => (b.disabled = true));
+            });
+
+            socket.on("voting_started", (data) => {
+                document.getElementById("visitorPurposeText").textContent =
+                    data.visitor_purpose;
+                document.getElementById("visitorExtractedText").textContent =
+                    data.extracted_info;
+                document
+                    .querySelectorAll(".vote-buttons button")
+                    .forEach((b) => (b.disabled = false));
+                statusMessage.textContent =
+                    "Voting is now open. Please cast your vote.";
+            });
+
+            function sendVote(voteType) {
+                socket.emit("submit_vote", {
+                    session_id: currentSessionId,
+                    vote_type: voteType,
+                });
+                document
+                    .querySelectorAll(".vote-buttons button")
+                    .forEach((b) => (b.disabled = true));
+                statusMessage.textContent = `You voted to ${voteType.toUpperCase()}. Waiting for results...`;
+            }
+
+            socket.on("vote_submitted_confirmation", (data) => {
+                // Already updated status in sendVote, could add more confirmation if needed
+                console.log("Vote confirmed by server:", data.status);
+            });
+
+            socket.on("voting_ended", (data) => {
+                statusMessage.textContent = `Voting has ended. Outcome: ${data.outcome}`;
+                document
+                    .querySelectorAll(".vote-buttons button")
+                    .forEach((b) => (b.disabled = true));
+            });
+
+            socket.on("error", (data) => {
+                statusMessage.textContent = `Error: ${data.message}`;
+                alert(`Error: ${data.message}`);
+            });
+
+            socket.on("disconnect", () => {
+                statusMessage.textContent = "Disconnected from server.";
+            });
+        </script>
+    </body>
+</html>

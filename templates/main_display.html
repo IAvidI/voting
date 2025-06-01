@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <title>Access Control - Main Display</title>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                margin: 20px;
+                background-color: #f4f4f4;
+                color: #333;
+            }
+            .container {
+                background-color: #fff;
+                padding: 20px;
+                border-radius: 8px;
+                box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            }
+            h1,
+            h2,
+            h3 {
+                color: #0056b3;
+            }
+            #qrCode img {
+                border: 1px solid #ddd;
+                padding: 5px;
+            }
+            #statusArea,
+            #thinkingProcess,
+            #votingStatus,
+            #outcomeArea {
+                margin-top: 20px;
+                padding: 15px;
+                border: 1px solid #eee;
+                border-radius: 5px;
+                background-color: #e9f5ff;
+            }
+            .log-message {
+                margin-bottom: 5px;
+                font-family: monospace;
+            }
+            button {
+                background-color: #007bff;
+                color: white;
+                padding: 10px 15px;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 16px;
+                margin-top: 10px;
+            }
+            button:hover {
+                background-color: #0056b3;
+            }
+            input[type="text"] {
+                padding: 8px;
+                margin-right: 5px;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+            }
+            .residents-list li {
+                list-style-type: decimal;
+            }
+            .highlight {
+                font-weight: bold;
+                color: #d9534f;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Adaptive Access Control Simulation</h1>
+            <p>
+                <strong>Session ID:</strong>
+                <span id="sessionIdDisplay">N/A</span>
+            </p>
+
+            <button id="createSessionBtn">Create New Access Session</button>
+
+            <div id="joinSection" style="display: none">
+                <h2>1. Residents Join Here:</h2>
+                <p>
+                    Scan QR Code or go to:
+                    <a id="joinLink" href="#" target="_blank"></a>
+                </p>
+                <div id="qrCode"></div>
+                <h3>
+                    Connected Residents (<span id="residentCount">0</span>):
+                </h3>
+                <ul id="residentsList"></ul>
+            </div>
+
+            <div id="visitorInputSection" style="display: none">
+                <h2>2. Visitor Interaction (Admin Input):</h2>
+                <label for="visitorPurposeInput"
+                    >Visitor's Stated Purpose:</label
+                >
+                <input
+                    type="text"
+                    id="visitorPurposeInput"
+                    value="DHL delivery for Apartment 3"
+                />
+                <button id="startVotingBtn">Initiate Voting Process</button>
+            </div>
+
+            <div id="thinkingProcess" style="display: none">
+                <h3>System Thinking Process:</h3>
+                <div id="thinkingLog"></div>
+            </div>
+
+            <div id="votingStatus" style="display: none">
+                <h3>Voting Status:</h3>
+                <p>Total Residents (n): <strong id="totalN">0</strong></p>
+                <p>
+                    Votes Needed for Approval (t):
+                    <strong id="thresholdT">0</strong>
+                </p>
+                <p>Visitor Purpose: <em id="displayVisitorPurpose"></em></p>
+                <p>Extracted Info: <em id="displayExtractedInfo"></em></p>
+                <p>
+                    Votes Received: <strong id="votesReceived">0</strong> /
+                    <strong id="totalResidentsForVote">0</strong>
+                </p>
+                <p>
+                    Allow: <strong id="allowVotes">0</strong> | Deny:
+                    <strong id="denyVotes">0</strong> | Abstain:
+                    <strong id="abstainVotes">0</strong> | No Response:
+                    <strong id="noResponseVotes">0</strong>
+                </p>
+                <button id="tallyVotesBtn" style="display: none">
+                    Manually Tally Votes
+                </button>
+            </div>
+
+            <div id="outcomeArea" style="display: none">
+                <h3>Outcome:</h3>
+                <p id="finalOutcome" class="highlight"></p>
+            </div>
+        </div>
+
+        <script>
+            const socket = io();
+            let currentSessionId = null;
+
+            const createSessionBtn =
+                document.getElementById("createSessionBtn");
+            const joinSection = document.getElementById("joinSection");
+            const visitorInputSection = document.getElementById(
+                "visitorInputSection"
+            );
+            const thinkingProcess = document.getElementById("thinkingProcess");
+            const thinkingLog = document.getElementById("thinkingLog");
+            const votingStatus = document.getElementById("votingStatus");
+            const outcomeArea = document.getElementById("outcomeArea");
+            const tallyVotesBtn = document.getElementById("tallyVotesBtn");
+
+            function logToThinkingProcess(message) {
+                const p = document.createElement("p");
+                p.className = "log-message";
+                p.innerHTML = `[${new Date().toLocaleTimeString()}] ${message}`; // Using innerHTML for potential bolding etc.
+                thinkingLog.appendChild(p);
+                thinkingLog.scrollTop = thinkingLog.scrollHeight; // Auto-scroll
+            }
+
+            createSessionBtn.onclick = () => {
+                socket.emit("create_session");
+                createSessionBtn.disabled = true;
+                logToThinkingProcess("Admin: Creating new access session...");
+                thinkingProcess.style.display = "block";
+            };
+
+            socket.on("session_created", (data) => {
+                currentSessionId = data.session_id;
+                document.getElementById("sessionIdDisplay").textContent =
+                    currentSessionId;
+                document.getElementById(
+                    "qrCode"
+                ).innerHTML = `<img src="data:image/png;base64,${data.qr_code}" alt="QR Code">`;
+                const joinLinkEl = document.getElementById("joinLink");
+                joinLinkEl.href = data.join_url;
+                joinLinkEl.textContent = data.join_url;
+                joinSection.style.display = "block";
+                visitorInputSection.style.display = "block";
+                createSessionBtn.style.display = "none"; // Hide create button
+                logToThinkingProcess(
+                    `System: Session <strong class="highlight">${currentSessionId}</strong> created. QR code displayed for residents to join.`
+                );
+            });
+
+            socket.on("resident_joined_notification", (data) => {
+                document.getElementById("residentCount").textContent =
+                    data.resident_count;
+                const listItem = document.createElement("li");
+                listItem.id = `res-${data.sid}`;
+                listItem.textContent = data.nickname;
+                document.getElementById("residentsList").appendChild(listItem);
+                logToThinkingProcess(
+                    `System: Resident '<strong class="highlight">${data.nickname}</strong>' joined. Total residents: ${data.resident_count}.`
+                );
+                document.getElementById("totalResidentsForVote").textContent =
+                    data.resident_count; // Update for voting status
+                document.getElementById("noResponseVotes").textContent =
+                    data.resident_count -
+                    parseInt(
+                        document.getElementById("votesReceived").textContent
+                    );
+            });
+            socket.on("resident_left_notification", (data) => {
+                document.getElementById("residentCount").textContent =
+                    data.resident_count;
+                const listItem = document.getElementById(`res-${data.sid}`);
+                if (listItem) listItem.remove();
+                logToThinkingProcess(
+                    `System: Resident '<strong class="highlight">${data.nickname}</strong>' left. Total residents: ${data.resident_count}.`
+                );
+
+                // Update voting status if voting is active
+                document.getElementById("totalN").textContent =
+                    data.resident_count;
+                document.getElementById("totalResidentsForVote").textContent =
+                    data.resident_count;
+
+                document.getElementById("allowVotes").textContent =
+                    data.vote_counts.allow;
+                document.getElementById("denyVotes").textContent =
+                    data.vote_counts.deny;
+                document.getElementById("abstainVotes").textContent =
+                    data.vote_counts.abstain;
+                document.getElementById("votesReceived").textContent =
+                    data.votes_received_count;
+                document.getElementById("noResponseVotes").textContent =
+                    data.resident_count - data.votes_received_count;
+            });
+
+            document.getElementById("startVotingBtn").onclick = () => {
+                const purpose = document.getElementById(
+                    "visitorPurposeInput"
+                ).value;
+                if (currentSessionId && purpose) {
+                    socket.emit("start_voting_round", {
+                        session_id: currentSessionId,
+                        visitor_purpose: purpose,
+                    });
+                    logToThinkingProcess(
+                        `Admin: Initiating voting round for purpose: "${purpose}".`
+                    );
+                    document.getElementById("startVotingBtn").disabled = true;
+                } else {
+                    alert("Session not created or purpose is empty.");
+                }
+            };
+
+            socket.on("voting_parameters_set", (data) => {
+                logToThinkingProcess(
+                    `System: Visitor stated: '<strong class="highlight">${data.visitor_purpose}</strong>'.`
+                );
+                logToThinkingProcess("System: NLP Processing (Simulated)...");
+                logToThinkingProcess(
+                    `System: Extracted Info: '<strong class="highlight">${data.extracted_info}</strong>'.`
+                );
+                logToThinkingProcess(
+                    `System: Determining Voting Parameters...`
+                );
+                logToThinkingProcess(
+                    `System: Total Residents (n) = <strong class="highlight">${data.n}</strong>.`
+                );
+                logToThinkingProcess(
+                    `System: Votes needed for Approval (t) = <strong class="highlight">${data.t}</strong> (e.g., simple majority).`
+                );
+                logToThinkingProcess(
+                    `System: Initiating Vote: Sending request to ${data.n} residents.`
+                );
+
+                votingStatus.style.display = "block";
+                document.getElementById("totalN").textContent = data.n;
+                document.getElementById("thresholdT").textContent = data.t;
+                document.getElementById("displayVisitorPurpose").textContent =
+                    data.visitor_purpose;
+                document.getElementById("displayExtractedInfo").textContent =
+                    data.extracted_info;
+                document.getElementById("totalResidentsForVote").textContent =
+                    data.n;
+                document.getElementById("votesReceived").textContent = 0;
+                document.getElementById("allowVotes").textContent = 0;
+                document.getElementById("denyVotes").textContent = 0;
+                document.getElementById("abstainVotes").textContent = 0;
+                document.getElementById("noResponseVotes").textContent = data.n; // Initially all are no response
+                tallyVotesBtn.style.display = "inline-block"; // Show manual tally button
+                outcomeArea.style.display = "none"; // Hide previous outcome
+                logToThinkingProcess(`System: Waiting for responses...`);
+            });
+
+            socket.on("vote_update", (data) => {
+                document.getElementById("votesReceived").textContent =
+                    data.votes_received_count;
+                document.getElementById("allowVotes").textContent =
+                    data.vote_counts.allow;
+                document.getElementById("denyVotes").textContent =
+                    data.vote_counts.deny;
+                document.getElementById("abstainVotes").textContent =
+                    data.vote_counts.abstain;
+                document.getElementById("noResponseVotes").textContent =
+                    parseInt(document.getElementById("totalN").textContent) -
+                    data.votes_received_count;
+
+                logToThinkingProcess(
+                    `System: Vote received. Current Tally: Allow: ${
+                        data.vote_counts.allow
+                    }, Deny: ${data.vote_counts.deny}, Abstain: ${
+                        data.vote_counts.abstain
+                    }. (${data.votes_received_count}/${
+                        document.getElementById("totalN").textContent
+                    })`
+                );
+            });
+
+            tallyVotesBtn.onclick = () => {
+                if (currentSessionId) {
+                    socket.emit("tally_votes", {
+                        session_id: currentSessionId,
+                    });
+                    logToThinkingProcess(
+                        `Admin: Manually triggered vote tallying.`
+                    );
+                    tallyVotesBtn.style.display = "none";
+                }
+            };
+
+            socket.on("votes_tallied", (data) => {
+                logToThinkingProcess("System: Vote Tally Complete.");
+                logToThinkingProcess(
+                    `System: Allow: ${data.vote_counts.allow}, Deny: ${data.vote_counts.deny}, Abstain: ${data.vote_counts.abstain}, No Response: ${data.vote_counts.no_response}.`
+                );
+                logToThinkingProcess(
+                    `System: Reconstructing Decision: Comparing Allow votes (${data.vote_counts.allow}) with threshold (t = ${data.t}).`
+                );
+                logToThinkingProcess(
+                    `System: Outcome: <strong class="highlight">${data.outcome}</strong>.`
+                );
+
+                document.getElementById("finalOutcome").textContent =
+                    data.outcome;
+                outcomeArea.style.display = "block";
+                tallyVotesBtn.style.display = "none"; // Hide if it was visible
+                // Allow starting a new round or creating a new session
+                document.getElementById("startVotingBtn").disabled = false; // Re-enable for a new round in same session (if desired)
+            });
+
+            socket.on("error", (data) => {
+                logToThinkingProcess(
+                    `System Error: <strong class="highlight">${data.message}</strong>`
+                );
+                alert(`Error: ${data.message}`);
+            });
+
+            // Initial state
+            logToThinkingProcess(
+                "System: Main display initialized. Waiting for admin to create a session."
+            );
+        </script>
+    </body>
+</html>
