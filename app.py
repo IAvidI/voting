@@ -34,7 +34,7 @@ def resident_join_page(session_id):
 
 # --- SocketIO Events for Admin/Main Display ---
 @socketio.on('create_session')
-def handle_create_session(data):
+def handle_create_session(): # Removed 'data' parameter
     session_id = str(uuid.uuid4())[:8] # Short unique ID
     active_sessions[session_id] = {
         'admin_sid': request.sid,
@@ -49,7 +49,12 @@ def handle_create_session(data):
         'outcome': ''
     }
     join_room(session_id) # Admin joins the room
-    join_url = request.host_url + 'join/' + session_id
+    # Construct the base URL more reliably
+    base_url = request.host_url.replace('http://', 'http://') # ensure it's http for local, adjust if https needed
+    if not base_url.endswith('/'):
+        base_url += '/'
+    join_url = base_url + 'join/' + session_id
+
     qr_img_b64 = generate_qr_code(join_url)
     emit('session_created', {'session_id': session_id, 'qr_code': qr_img_b64, 'join_url': join_url})
     print(f"Session {session_id} created by {request.sid}. Join URL: {join_url}")
