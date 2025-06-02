@@ -211,6 +211,16 @@
                 setVoteButtonsDisabled(true); // Ensure buttons are disabled on fresh connect
             });
 
+            socket.on("nickname_taken_error", (data) => {
+                statusMessage.textContent = `Error: ${data.message}`;
+                // Re-enable the nickname input section so the user can try a different name
+                nicknameSection.style.display = "block";
+                votingSection.style.display = "none"; // Hide voting section
+                document.getElementById("myNickname").textContent = ""; // Clear potentially set nickname
+                document.getElementById("nicknameInput").focus(); // Focus on input
+                document.getElementById("nicknameInput").select(); // Select current text for easy replacement
+            });
+
             socket.on("joined_successfully", (data) => {
                 statusMessage.textContent = `Joined session ${data.session_id} as ${data.nickname}. Waiting for vote...`;
                 nicknameSection.style.display = "none";

@@ -167,10 +167,20 @@ def handle_tally_votes_request(data): # Renamed to avoid conflict, this is for a
 @socketio.on('join_session_resident')
 def handle_join_session_resident(data):
     session_id = data.get('session_id')
-    nickname = data.get('nickname', f'Resident_{str(uuid.uuid4())[:4]}')
+    nickname = data.get('nickname', f'Resident_{str(uuid.uuid4())[:4]}').strip() # Ensure nickname is stripped of whitespace
+
+    if not nickname: # Prevent empty nicknames
+        emit('error', {'message': 'Nickname cannot be empty.'}) # Generic error, or a more specific one
+        return
 
     if session_id in active_sessions:
         current_session = active_sessions[session_id]
+
+        existing_nicknames = list(current_session['residents'].values()) # Get a list of current nicknames
+        if nickname in existing_nicknames:
+            emit('nickname_taken_error', {'message': f"Nickname '{nickname}' is already taken. Please choose another."})
+            return # Stop further processing for this join attempt
+
         # Allow joining if session is 'pending', 'joining', or 'tallied' (i.e., not actively 'voting')
         if current_session['status'] != 'voting':
             if request.sid not in current_session['residents']: # Prevent re-joining if already in
