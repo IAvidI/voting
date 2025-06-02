@@ -67,7 +67,10 @@
                 color: white;
             }
             #submitPurposeBtnClient:disabled {
-                background-color: #ccc;
+                background-color: #ccc !important;
+                color: #666 !important;
+                opacity: 0.7 !important;
+                cursor: not-allowed !important;
             }
 
             /* Active State Styles - Copied from previous good state */
@@ -269,22 +272,40 @@
                 ".vote-buttons button"
             );
 
-            function updateUIVisibility() {
-                nicknameSectionEl.classList.add("hidden");
-                visitorUiSectionEl.classList.add("hidden");
-                residentUiSectionEl.classList.add("hidden");
+            function updateUIVisibility(isErrorState = false) {
+                // Default to hiding all specific role/action sections
+                nicknameSectionEl.style.display = "none"; // More direct control
+                visitorUiSectionEl.style.display = "none";
+                residentUiSectionEl.style.display = "none";
 
-                if (currentUserRole === "unassigned") {
-                    nicknameSectionEl.classList.remove("hidden"); // Should be hidden after join, show waiting msg
-                    roleStatusMessageEl.textContent = myCurrentNickname
-                        ? `Hi ${myCurrentNickname}. Waiting for admin to assign role or start process.`
-                        : "Enter nickname to join.";
-                } else if (currentUserRole === "visitor") {
-                    visitorUiSectionEl.classList.remove("hidden");
-                    roleStatusMessageEl.textContent = `Hi ${myCurrentNickname}. You are the Visitor.`;
+                if (isErrorState) {
+                    nicknameSectionEl.style.display = "block"; // Show for error correction (e.g. nickname taken)
+                    // roleStatusMessageEl is usually set by the error handler itself
+                    return;
+                }
+
+                if (currentUserRole === "visitor") {
+                    visitorUiSectionEl.style.display = "block";
+                    roleStatusMessageEl.textContent = `Hi ${
+                        myCurrentNickname || "Visitor"
+                    }. You are the Visitor.`;
                 } else if (currentUserRole === "resident") {
-                    residentUiSectionEl.classList.remove("hidden");
-                    roleStatusMessageEl.textContent = `Hi ${myCurrentNickname}. You are a Resident (Voter).`;
+                    residentUiSectionEl.style.display = "block";
+                    roleStatusMessageEl.textContent = `Hi ${
+                        myCurrentNickname || "Resident"
+                    }. You are a Resident (Voter).`;
+                } else {
+                    // currentUserRole === "unassigned"
+                    if (myCurrentNickname) {
+                        // Nickname has been submitted, user is waiting for role assignment.
+                        // Nickname section should remain hidden.
+                        roleStatusMessageEl.textContent = `Hi ${myCurrentNickname}. Waiting for admin to assign a role.`;
+                    } else {
+                        // Initial state, or after an error that cleared nickname, needs to input nickname.
+                        nicknameSectionEl.style.display = "block";
+                        roleStatusMessageEl.textContent =
+                            "Enter nickname to join.";
+                    }
                 }
             }
 
@@ -295,20 +316,24 @@
             function joinWithNickname() {
                 const nicknameInputEl =
                     document.getElementById("nicknameInput");
-                myCurrentNickname = nicknameInputEl
+                let tentativeNickname = nicknameInputEl
                     ? nicknameInputEl.value.trim()
                     : "";
-                if (!myCurrentNickname) {
-                    myCurrentNickname = `User${Math.floor(
-                        Math.random() * 1000
-                    )}`;
+                if (!tentativeNickname) {
+                    // Keep it simple, server can assign a default if needed or send error
+                    statusMessageEl.textContent = "Nickname cannot be empty."; // Inform user
+                    return; // Don't proceed if nickname is empty
                 }
-                myNicknameEl.textContent = myCurrentNickname;
-                nicknameSectionEl.classList.add("hidden"); // Hide nickname input after submission
-                roleStatusMessageEl.textContent = `Joining as ${myCurrentNickname}...`;
+                // Don't set myCurrentNickname here yet, wait for server confirmation via joined_successfully_waiting_role
+
+                myNicknameEl.textContent = tentativeNickname; // Optimistically display
+                nicknameSectionEl.style.display = "none"; // Hide nickname input immediately
+                roleStatusMessageEl.textContent = `Joining as ${tentativeNickname}...`;
+                statusMessageEl.textContent = ""; // Clear previous errors
+
                 socket.emit("join_session_resident", {
                     session_id: currentSessionId,
-                    nickname: myCurrentNickname,
+                    nickname: tentativeNickname, // Send the nickname
                 });
             }
 
@@ -339,38 +364,47 @@
             }
 
             socket.on("connect", () => {
-                roleStatusMessageEl.textContent =
-                    "Connected. Enter nickname to join session.";
-                updateUIVisibility(); // Show nickname section initially
+                // If myCurrentNickname is already set (e.g. from a previous incomplete join/refresh),
+                // it might try to rejoin or wait. Server logic handles actual join state.
+                // For now, assume fresh state on connect for simplicity, or server will guide.
+                if (!myCurrentNickname) {
+                    // Only if no nickname has been processed yet
+                    currentUserRole = "unassigned";
+                    updateUIVisibility();
+                } else {
+                    // If there's a nickname, they might be reconnecting, show waiting message
+                    roleStatusMessageEl.textContent = `Reconnected as ${myCurrentNickname}. Waiting for status...`;
+                    // Server should resend role if needed on reconnect
+                }
             });
 
             socket.on("joined_successfully_waiting_role", (data) => {
-                myCurrentNickname = data.nickname; // Ensure nickname is set from server confirmation
+                myCurrentNickname = data.nickname; // Set/confirm from server
                 myNicknameEl.textContent = myCurrentNickname;
-                currentUserRole = "unassigned"; // Explicitly set state
-                updateUIVisibility();
-                statusMessageEl.textContent = ""; // Clear general status
+                currentUserRole = "unassigned"; // Still waiting for role *assignment*
+                updateUIVisibility(); // This will now hide nicknameSection because myCurrentNickname is set
+                statusMessageEl.textContent = ""; // Clear "Joining..." or previous errors
             });
 
             socket.on("role_assigned", (data) => {
+                myCurrentNickname =
+                    myNicknameEl.textContent || data.visitor_nickname || "User"; // Ensure myCurrentNickname is up-to-date
                 currentUserRole = data.your_role;
                 updateUIVisibility();
                 statusMessageEl.textContent = ""; // Clear previous status
                 if (currentUserRole === "resident") {
                     visitorNameForResidentEl.textContent =
                         data.visitor_nickname || "N/A";
-                    setVoteButtonsDisabled(true); // Residents start with buttons disabled
+                    setVoteButtonsDisabled(true);
                     outcomeDisplayResidentEl.textContent = "";
                     yourVoteDisplayEl.textContent = "";
-                    roleStatusMessageEl.textContent = `Hi ${myCurrentNickname}. You are a Resident. Waiting for voting on visitor: ${
-                        data.visitor_nickname || "N/A"
-                    }.`;
+                    // roleStatusMessageEl is already set by updateUIVisibility
                 } else if (currentUserRole === "visitor") {
-                    visitorPurposeInputClientEl.value = ""; // Clear any previous text
+                    visitorPurposeInputClientEl.value = "";
                     visitorPurposeInputClientEl.disabled = false;
                     submitPurposeBtnClientEl.disabled = false;
                     visitorOutcomeMessageEl.textContent = "";
-                    roleStatusMessageEl.textContent = `Hi ${myCurrentNickname}. You are the Visitor. Please state your purpose.`;
+                    // roleStatusMessageEl is already set by updateUIVisibility
                 }
             });
 
@@ -441,12 +475,21 @@
             });
 
             socket.on("nickname_taken_error", (data) => {
-                statusMessageEl.textContent = `Error: ${data.message}`;
-                nicknameSectionEl.classList.remove("hidden"); // Show nickname input again
-                myNicknameEl.textContent = ""; // Clear potentially set nickname
-                document.getElementById("nicknameInput").focus();
-                currentUserRole = "unassigned"; // Reset role
-                updateUIVisibility();
+                currentUserRole = "unassigned";
+                myCurrentNickname = ""; // Clear the bad nickname
+                myNicknameEl.textContent = ""; // Clear from display
+
+                updateUIVisibility(true); // Call with error state true
+
+                roleStatusMessageEl.textContent = "Nickname Error!"; // More prominent error at top
+                statusMessageEl.textContent = `Error: ${data.message}. Please choose another.`; // Detailed error below
+
+                const nicknameInputEl =
+                    document.getElementById("nicknameInput");
+                if (nicknameInputEl) {
+                    nicknameInputEl.value = ""; // Clear the input field
+                    nicknameInputEl.focus();
+                }
             });
 
             socket.on("disconnect", () => {
@@ -458,6 +501,20 @@
                 residentUiSectionEl.classList.add("hidden");
                 nicknameSectionEl.classList.add("hidden");
             });
+
+            const nicknameInputElGlobal =
+                document.getElementById("nicknameInput");
+            if (nicknameInputElGlobal) {
+                nicknameInputElGlobal.addEventListener(
+                    "keypress",
+                    function (event) {
+                        if (event.key === "Enter") {
+                            event.preventDefault();
+                            joinWithNickname();
+                        }
+                    }
+                );
+            }
 
             // Initial UI state
             updateUIVisibility();
