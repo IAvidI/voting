@@ -1,4 +1,3 @@
-# app.py
 from flask import Flask, render_template, request, session
 from flask_socketio import SocketIO, emit, join_room, leave_room
 import qrcode
@@ -8,10 +7,10 @@ import uuid
 import threading # For the timer
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'your_secret_key!'
+app.config['SECRET_KEY'] = 'your_secret_key!' # Replace with a real secret key
 socketio = SocketIO(app)
 
-active_sessions = {} # session_id: {..., timer_object: None, timer_duration: 0, ...}
+active_sessions = {}
 
 def generate_qr_code(data):
     img = qrcode.make(data)
@@ -25,184 +24,287 @@ def admin_index():
 
 @app.route('/join/<session_id>')
 def resident_join_page(session_id):
+    # Ensure session_id is in active_sessions BEFORE rendering
     if session_id in active_sessions:
-        session['current_session_id'] = session_id
+        # session['current_session_id'] = session_id # Client gets session_id via URL param, this server-side session var is not strictly needed for client
         return render_template('resident_vote.html', session_id=session_id)
     return "Session not found or inactive.", 404
 
 def server_tally_votes(session_id):
-    with app.app_context(): # Needed for socketio calls from thread
-        print(f"Server_tally_votes called for session {session_id} by timer/internal logic")
+    with app.app_context():
+        print(f"Server_tally_votes called for session {session_id}")
         if session_id in active_sessions and active_sessions[session_id]['status'] == 'voting':
             current_session = active_sessions[session_id]
-            
-            # Emit an event to main display that voting period is over (due to timer/all votes)
-            # This can help the main display clear its own client-side timer if it was running one.
-            socketio.emit('voting_ended_by_server', {'session_id': session_id}, room=session_id)
 
-            # Proceed with tallying
-            current_session['status'] = 'tallied'
+            # Cancel the timer if it's still active
             if current_session.get('timer_object'):
-                current_session['timer_object'].cancel() # Ensure timer is cancelled
+                current_session['timer_object'].cancel()
                 current_session['timer_object'] = None
+            
+            current_session['status'] = 'tallied'
+            print(f"Session {session_id} status changed to 'tallied'")
 
-            # Calculate 'no_response' votes
+            # Calculate 'no_response' votes based on 'residents_voting' and actual votes received
             responded_sids = set(current_session['votes'].keys())
-            all_resident_sids = set(current_session['residents'].keys())
-            no_response_sids = all_resident_sids - responded_sids
-            current_session['vote_counts']['no_response'] = len(no_response_sids)
+            # Voters are those in residents_voting at the START of the voting round.
+            # n_voters was set when voting started.
+            expected_voter_sids = set(current_session['residents_voting'].keys()) # These are the SIDs of those who *should* have voted
+            
+            # This calculation of no_response was faulty in previous user version.
+            # Correct approach: no_response_count = n_voters_at_start_of_round - number_of_votes_actually_cast
+            # The current_session['vote_counts']['no_response'] is decremented upon vote.
+            # If timer expires, those who haven't voted remain in 'no_response' count.
+            # Let's ensure vote_counts['no_response'] is correct.
+            # It's initialized to n_voters and decremented per vote. So it should be fine.
 
-            if current_session['vote_counts']['allow'] >= current_session['t']:
+            if current_session['vote_counts']['allow'] >= current_session['t_threshold']: # Use t_threshold
                 current_session['outcome'] = 'Access Granted'
             else:
                 current_session['outcome'] = 'Access Denied'
 
             print(f"Session {session_id}: Votes tallied. Outcome: {current_session['outcome']}")
+            
+            # Notify admin display
             socketio.emit('votes_tallied', {
                 'vote_counts': current_session['vote_counts'],
                 'outcome': current_session['outcome'],
-                'n': current_session['n'],
-                't': current_session['t']
-            }, room=session_id)
-            # Notify residents voting has ended and the outcome
-            socketio.emit('voting_ended', {'outcome': current_session['outcome']}, room=session_id, include_self=True)
+                'n': current_session['n_voters'], # Use n_voters
+                't': current_session['t_threshold'] # Use t_threshold
+            }, room=current_session['admin_sid']) # Target admin specifically
+
+            # Notify residents (voters)
+            for resident_sid in current_session['residents_voting'].keys():
+                socketio.emit('voting_ended', {
+                    'outcome': current_session['outcome']
+                }, room=resident_sid)
+            
+            # Notify the visitor
+            if current_session.get('visitor_sid'):
+                socketio.emit('visitor_outcome', {
+                    'outcome': current_session['outcome'],
+                    # 'message': f"Outcome: {current_session['outcome']}."
+                }, room=current_session['visitor_sid'])
+            
+            # General 'voting_ended_by_server' is good for admin log, but results are above
+            socketio.emit('voting_ended_by_server', {'session_id': session_id, 'reason': 'Tally complete'}, room=current_session['admin_sid'])
+
+        elif session_id in active_sessions and active_sessions[session_id]['status'] == 'tallied':
+             print(f"Session {session_id} already tallied. Ignoring redundant tally call.")
         else:
-            print(f"Attempted to tally for {session_id}, but not in voting status or session DNE.")
+            print(f"Attempted to tally for {session_id}, but session not found or not in 'voting' status. Current status: {active_sessions.get(session_id, {}).get('status')}")
 
 
-# --- SocketIO Events for Admin/Main Display ---
 @socketio.on('create_session')
 def handle_create_session():
     session_id = str(uuid.uuid4())[:8]
     active_sessions[session_id] = {
         'admin_sid': request.sid,
-        'residents': {},
+        'all_connected_users': {},
+        'residents_voting': {}, 
+        'visitor_sid': None,
+        'visitor_nickname': None,
         'votes': {},
         'visitor_purpose': '',
         'extracted_info': '',
-        'n': 0,
-        't': 0,
-        'status': 'pending', # 'pending', 'joining', 'voting', 'tallied'
+        'n_voters': 0,
+        't_threshold': 0,
+        'status': 'role_assignment', # Start with role assignment
         'vote_counts': {'allow': 0, 'deny': 0, 'abstain': 0, 'no_response': 0},
         'outcome': '',
         'timer_object': None,
         'timer_duration': 0
     }
-    join_room(session_id)
+    join_room(session_id) # Admin joins the session room
     base_url = request.host_url 
     if not base_url.endswith('/'):
         base_url += '/'
     join_url = base_url + 'join/' + session_id
     qr_img_b64 = generate_qr_code(join_url)
+    # Emit only to the creator (admin)
     emit('session_created', {'session_id': session_id, 'qr_code': qr_img_b64, 'join_url': join_url})
-    active_sessions[session_id]['status'] = 'joining' # Now open for joining
-    print(f"Session {session_id} created by {request.sid}. Status: joining. Join URL: {join_url}")
+    print(f"Session {session_id} created by admin {request.sid}. Status: role_assignment.")
 
-@socketio.on('start_voting_round')
-def handle_start_voting_round(data):
+@socketio.on('admin_assign_visitor_role')
+def handle_admin_assign_visitor_role(data):
     session_id = data.get('session_id')
-    purpose = data.get('visitor_purpose', 'N/A')
-    timer_duration = data.get('timer_duration', 30) # Default 30s
+    visitor_candidate_sid = data.get('visitor_sid')
 
     if session_id in active_sessions and active_sessions[session_id]['admin_sid'] == request.sid:
         current_session = active_sessions[session_id]
         
-        # Cancel any existing timer for this session (e.g., if admin restarts a round quickly)
-        if current_session.get('timer_object'):
-            current_session['timer_object'].cancel()
-            current_session['timer_object'] = None
+        # If a visitor already exists and is different from the new candidate
+        if current_session['visitor_sid'] and current_session['visitor_sid'] != visitor_candidate_sid:
+            old_visitor_sid = current_session['visitor_sid']
+            if old_visitor_sid in current_session['all_connected_users']:
+                 current_session['all_connected_users'][old_visitor_sid]['role'] = 'resident'
+                 socketio.emit('role_assigned', {
+                     'your_role': 'resident', 
+                     'visitor_nickname': None # New visitor will be set shortly
+                    }, room=old_visitor_sid)
 
-        current_session['visitor_purpose'] = purpose
-        current_session['extracted_info'] = f"Purpose: {purpose} (Info by NLP - sim.)"
+        # Assign new visitor
+        if visitor_candidate_sid in current_session['all_connected_users']:
+            current_session['visitor_sid'] = visitor_candidate_sid
+            current_session['visitor_nickname'] = current_session['all_connected_users'][visitor_candidate_sid]['nickname']
+            current_session['all_connected_users'][visitor_candidate_sid]['role'] = 'visitor'
+            current_session['status'] = 'waiting_for_purpose'
+
+            current_session['residents_voting'] = {}
+            for sid, user_data in current_session['all_connected_users'].items():
+                if sid != current_session['admin_sid'] and sid != current_session['visitor_sid']:
+                    current_session['all_connected_users'][sid]['role'] = 'resident'
+                    current_session['residents_voting'][sid] = user_data['nickname']
+                    socketio.emit('role_assigned', {
+                        'your_role': 'resident', 
+                        'visitor_nickname': current_session['visitor_nickname']
+                        }, room=sid)
+                elif sid == current_session['visitor_sid']:
+                     socketio.emit('role_assigned', {
+                        'your_role': 'visitor', 
+                        'visitor_nickname': current_session['visitor_nickname']
+                        }, room=sid)
+            
+            emit('visitor_role_confirmed', { # To Admin
+                'visitor_sid': current_session['visitor_sid'],
+                'visitor_nickname': current_session['visitor_nickname'],
+                'residents_for_voting_count': len(current_session['residents_voting'])
+            }, room=current_session['admin_sid'])
+            print(f"Session {session_id}: {current_session['visitor_nickname']} assigned as Visitor.")
+        else:
+            emit('error', {'message': 'Selected user for visitor role not found.'})
+    else:
+        emit('error', {'message': 'Admin/Session error during role assignment.'})
+
+
+@socketio.on('visitor_submit_purpose')
+def handle_visitor_submit_purpose(data):
+    session_id = data.get('session_id')
+    purpose_text = data.get('purpose')
+
+    if session_id in active_sessions:
+        current_session = active_sessions[session_id]
+        if request.sid == current_session.get('visitor_sid') and current_session['status'] == 'waiting_for_purpose':
+            current_session['visitor_purpose'] = purpose_text
+            current_session['extracted_info'] = f"Purpose: {purpose_text} (Visitor: {current_session['visitor_nickname']})" # Simple extraction
+            current_session['status'] = 'ready_for_voting'
+
+            emit('purpose_received_from_visitor', { # To Admin
+                'visitor_nickname': current_session['visitor_nickname'],
+                'purpose': purpose_text,
+                'extracted_info': current_session['extracted_info']
+            }, room=current_session['admin_sid'])
+            emit('purpose_submission_confirmed', {'status': 'Purpose submitted, awaiting voting.'}, room=request.sid) # To Visitor
+            print(f"Session {session_id}: Purpose '{purpose_text}' received from visitor.")
+        else:
+            emit('error', {'message': 'Not authorized or session not in correct state for purpose submission.'})
+
+@socketio.on('start_voting_round')
+def handle_start_voting_round(data):
+    session_id = data.get('session_id')
+    timer_duration = data.get('timer_duration', 30)
+
+    if session_id in active_sessions and active_sessions[session_id]['admin_sid'] == request.sid:
+        current_session = active_sessions[session_id]
+
+        if not current_session.get('visitor_sid') or not current_session.get('visitor_purpose'):
+            emit('error', {'message': 'Visitor not assigned or purpose not stated.'})
+            return
+        
+        if current_session['status'] not in ['ready_for_voting', 'tallied']:
+            emit('error', {'message': f"Cannot start voting. Current status: {current_session['status']}"})
+            return
+
+        if current_session.get('timer_object'): # Clear previous timer
+            current_session['timer_object'].cancel()
+        
         current_session['status'] = 'voting'
-        current_session['n'] = len(current_session['residents'])
-        current_session['t'] = (current_session['n'] // 2) + 1 if current_session['n'] > 0 else 1
+        current_session['n_voters'] = len(current_session['residents_voting'])
+        current_session['t_threshold'] = (current_session['n_voters'] // 2) + 1 if current_session['n_voters'] > 0 else 1
         current_session['votes'] = {} 
-        current_session['vote_counts'] = {'allow': 0, 'deny': 0, 'abstain': 0, 'no_response': current_session['n']}
+        current_session['vote_counts'] = {'allow': 0, 'deny': 0, 'abstain': 0, 'no_response': current_session['n_voters']}
         current_session['outcome'] = '' # Reset outcome
         current_session['timer_duration'] = timer_duration
-
+        
+        # This data is sent to Admin display
         emit('voting_parameters_set', {
-            'n': current_session['n'],
-            't': current_session['t'],
+            'n': current_session['n_voters'], # CONSISTENTLY USE 'n' and 't' for this event if main_display expects it
+            't': current_session['t_threshold'],# OR change main_display to expect n_voters, t_threshold
             'visitor_purpose': current_session['visitor_purpose'],
             'extracted_info': current_session['extracted_info'],
-            'timer_duration': timer_duration
-        }, room=session_id)
+            'timer_duration': timer_duration,
+            'visitor_nickname': current_session['visitor_nickname']
+        }, room=current_session['admin_sid']) # Send only to admin
 
-        socketio.emit('voting_started', {
-            'visitor_purpose': current_session['visitor_purpose'],
-            'extracted_info': current_session['extracted_info'],
-            'timer_duration': timer_duration
-        }, room=session_id, include_self=False)
-
-        # Start the server-side timer
+        # Notify residents (actual voters) to start voting
+        for resident_sid in current_session['residents_voting'].keys():
+            socketio.emit('voting_started', {
+                'visitor_nickname': current_session['visitor_nickname'],
+                'visitor_purpose': current_session['visitor_purpose'],
+                'extracted_info': current_session['extracted_info'],
+                'timer_duration': timer_duration
+            }, room=resident_sid)
+        
         current_session['timer_object'] = threading.Timer(timer_duration, server_tally_votes, args=[session_id])
         current_session['timer_object'].start()
-
-        print(f"Session {session_id}: Voting started. Purpose: {purpose}. n={current_session['n']}, t={current_session['t']}. Timer: {timer_duration}s.")
+        print(f"Session {session_id}: Voting started. Voters: {current_session['n_voters']}, Threshold: {current_session['t_threshold']}.")
     else:
-        emit('error', {'message': 'Session not found or you are not the admin.'})
-
+        emit('error', {'message': 'Admin/Session error or not ready for voting.'})
 
 @socketio.on('tally_votes') 
-def handle_tally_votes_request(data): # Renamed to avoid conflict, this is for admin manual tally
+def handle_tally_votes_request(data):
     session_id = data.get('session_id')
-    triggered_by_admin = data.get('triggered_by_admin', False)
-    if session_id in active_sessions and active_sessions[session_id]['admin_sid'] == request.sid and triggered_by_admin:
-        print(f"Admin manually requested tally for session {session_id}")
-        if active_sessions[session_id]['status'] == 'voting':
-            if active_sessions[session_id].get('timer_object'):
-                active_sessions[session_id]['timer_object'].cancel() # Cancel existing timer
-                active_sessions[session_id]['timer_object'] = None
-            server_tally_votes(session_id) # Call the actual tally logic
+    if session_id in active_sessions and active_sessions[session_id]['admin_sid'] == request.sid:
+        current_session = active_sessions[session_id]
+        if current_session['status'] == 'voting':
+            print(f"Admin manually requested tally for session {session_id}")
+            if current_session.get('timer_object'):
+                current_session['timer_object'].cancel()
+                current_session['timer_object'] = None
+            server_tally_votes(session_id)
         else:
-            emit('error', {'message': 'Not in voting state to tally.'})
-    elif not triggered_by_admin:
-        # This event might be vestigial if server_tally_votes handles all logic
-        pass
+            emit('error', {'message': 'Not in voting state to tally manually.'})
 
-
-# --- SocketIO Events for Residents ---
-@socketio.on('join_session_resident')
-def handle_join_session_resident(data):
+# --- User Client Events ---
+@socketio.on('join_session_resident') # Renamed from old file for clarity with roles
+def handle_user_join(data): # Changed function name
     session_id = data.get('session_id')
-    nickname = data.get('nickname', f'Resident_{str(uuid.uuid4())[:4]}').strip() # Ensure nickname is stripped of whitespace
+    nickname = data.get('nickname', f'User_{str(uuid.uuid4())[:4]}').strip()
 
-    if not nickname: # Prevent empty nicknames
-        emit('error', {'message': 'Nickname cannot be empty.'}) # Generic error, or a more specific one
+    if not nickname:
+        emit('error', {'message': 'Nickname cannot be empty.'})
         return
 
     if session_id in active_sessions:
         current_session = active_sessions[session_id]
 
-        existing_nicknames = list(current_session['residents'].values()) # Get a list of current nicknames
-        if nickname in existing_nicknames:
-            emit('nickname_taken_error', {'message': f"Nickname '{nickname}' is already taken. Please choose another."})
-            return # Stop further processing for this join attempt
+        if request.sid in current_session['all_connected_users']: # Already connected (e.g. refresh)
+            user_data = current_session['all_connected_users'][request.sid]
+            emit('joined_successfully_waiting_role', {'nickname': user_data['nickname'], 'session_id': session_id, 'message': 'Reconnected.'})
+            socketio.emit('role_assigned', { # Resend current role
+                'your_role': user_data['role'],
+                'visitor_nickname': current_session.get('visitor_nickname')
+            }, room=request.sid)
+            return
 
-        # Allow joining if session is 'pending', 'joining', or 'tallied' (i.e., not actively 'voting')
-        if current_session['status'] != 'voting':
-            if request.sid not in current_session['residents']: # Prevent re-joining if already in
-                join_room(session_id) 
-                current_session['residents'][request.sid] = nickname
-                
-                # If joining after a round, n for the next round will update when it starts.
-                # For display purposes, update resident count to admin.
-                emit('resident_joined_notification', {
-                    'sid': request.sid, 
-                    'nickname': nickname, 
-                    'resident_count': len(current_session['residents'])
-                }, room=current_session['admin_sid']) 
-                
-                emit('joined_successfully', {'nickname': nickname, 'session_id': session_id})
-                print(f"Resident {nickname} ({request.sid}) joined session {session_id}. Current session status: {current_session['status']}. Total residents: {len(current_session['residents'])}")
-            else:
-                 emit('joined_successfully', {'nickname': current_session['residents'][request.sid], 'session_id': session_id, 'message': 'Reconnected or already joined.'})
-        else:
-            emit('error', {'message': 'Voting is currently in progress. Please try again later.'})
+        for user_data_val in current_session['all_connected_users'].values(): # Check by value
+            if user_data_val['nickname'] == nickname:
+                emit('nickname_taken_error', {'message': f"Nickname '{nickname}' is already taken."})
+                return
+        
+        join_room(session_id) # User joins the general session room
+        current_session['all_connected_users'][request.sid] = {'nickname': nickname, 'role': 'unassigned'}
+        
+        emit('user_joined_for_roles', { # To Admin
+            'sid': request.sid,
+            'nickname': nickname,
+            'all_users': current_session['all_connected_users']
+        }, room=current_session['admin_sid'])
+        
+        emit('joined_successfully_waiting_role', {'nickname': nickname, 'session_id': session_id}) # To joining client
+        print(f"User {nickname} ({request.sid}) joined session {session_id}. Awaiting role.")
     else:
         emit('error', {'message': 'Session ID not found.'})
+
 
 @socketio.on('submit_vote')
 def handle_submit_vote(data):
@@ -211,33 +313,34 @@ def handle_submit_vote(data):
 
     if session_id in active_sessions:
         current_session = active_sessions[session_id]
-        if current_session['status'] == 'voting' and request.sid in current_session['residents']:
+        if current_session['status'] == 'voting' and request.sid in current_session['residents_voting']:
             if request.sid not in current_session['votes']: 
                 current_session['votes'][request.sid] = vote_type
                 current_session['vote_counts'][vote_type] += 1
-                current_session['vote_counts']['no_response'] -=1
-
-
+                if current_session['vote_counts']['no_response'] > 0:
+                     current_session['vote_counts']['no_response'] -=1
+                
+                resident_nickname = current_session['residents_voting'][request.sid]
+                
                 emit('vote_update', { 
-                    'sid': request.sid,
+                    'sid': request.sid, # For admin to know who voted, if needed
                     'vote_counts': current_session['vote_counts'],
                     'votes_received_count': len(current_session['votes'])
                 }, room=current_session['admin_sid'])
-                emit('vote_submitted_confirmation', {'status': 'Vote recorded'})
-                print(f"Session {session_id}: Vote '{vote_type}' from {current_session['residents'][request.sid]} ({request.sid})")
+                emit('vote_submitted_confirmation', {'status': 'Vote recorded'}) # To voter
+                print(f"Session {session_id}: Vote '{vote_type}' from {resident_nickname} ({request.sid})")
 
-                # Check if all residents have voted
-                if len(current_session['votes']) == current_session['n'] and current_session['n'] > 0:
-                    print(f"All {current_session['n']} votes received for session {session_id}. Triggering early tally.")
+                if len(current_session['votes']) == current_session['n_voters'] and current_session['n_voters'] > 0:
+                    print(f"All {current_session['n_voters']} votes received. Triggering early tally.")
                     if current_session.get('timer_object'):
                         current_session['timer_object'].cancel()
                         current_session['timer_object'] = None
-                    server_tally_votes(session_id)
-                    # socketio.start_background_task(server_tally_votes, session_id)
+                    # Use background task as it was more reliable for the "last voter" issue
+                    socketio.start_background_task(server_tally_votes, session_id)
             else:
                 emit('error', {'message': 'You have already voted.'})
         else:
-            emit('error', {'message': 'Voting is not active or you are not a resident.'})
+            emit('error', {'message': 'Voting is not active or you are not a designated voter.'})
     else:
         emit('error', {'message': 'Session ID not found.'})
 
@@ -245,54 +348,86 @@ def handle_submit_vote(data):
 @socketio.on('disconnect')
 def handle_disconnect():
     print(f"Client disconnected: {request.sid}")
-    for session_id, details in list(active_sessions.items()): # Iterate over a copy
+    for session_id, details in list(active_sessions.items()):
         if request.sid == details.get('admin_sid'):
             print(f"Admin for session {session_id} disconnected. Cleaning up session.")
-            if details.get('timer_object'):
-                details['timer_object'].cancel()
-            socketio.emit('error', {'message': 'Admin disconnected. Session terminated.'}, room=session_id)
-            # socketio.close_room(session_id) # This might cause issues if other events are pending
-            if session_id in active_sessions: # Check if not already deleted by another op
-                del active_sessions[session_id]
+            if details.get('timer_object'): details['timer_object'].cancel()
+            # Notify all other users in the room before deleting session
+            other_users_in_session = [sid for sid in details.get('all_connected_users', {}) if sid != request.sid]
+            for user_sid in other_users_in_session:
+                socketio.emit('error', {'message': 'Admin disconnected. Session terminated.'}, room=user_sid)
+            
+            if session_id in active_sessions: del active_sessions[session_id]
             break
-        if request.sid in details.get('residents', {}):
-            nickname = details['residents'].pop(request.sid)
-            
-            # If resident disconnects during voting and hasn't voted
-            if details['status'] == 'voting' and request.sid not in details.get('votes', {}):
-                details['vote_counts']['no_response'] -= 1 # They won't be a 'no response' anymore if they left
-                # The number of expected votes 'n' effectively decreases for this round if we don't re-calc 't'
-                # Or, we can let them be a 'no response' and n/t remain static for the round
-                # For simplicity, let 'n' and 't' for the current round remain. Tally will count them as non-voter.
-                # If they had voted, their vote is still counted. The 'pop' below handles if we want to remove their vote.
+        
+        user_disconnected_data = details.get('all_connected_users', {}).pop(request.sid, None)
+        if user_disconnected_data:
+            nickname = user_disconnected_data['nickname']
+            print(f"User {nickname} (SID: {request.sid}) disconnected from session {session_id}.")
 
-            # If we want to remove vote of disconnected user (more complex, 't' might need re-eval)
-            # if request.sid in details.get('votes', {}):
-            #     vote_type = details['votes'].pop(request.sid)
-            #     details['vote_counts'][vote_type] -= 1
-            
-            # Notify admin about the disconnected resident
-            # The count for 'n' for current round should ideally remain fixed once voting starts.
-            # For display, the admin will see one less *active* resident.
-            emit('resident_left_notification', {
-                'sid': request.sid,
+            was_visitor = (request.sid == details.get('visitor_sid'))
+            was_voting_resident = (request.sid in details.get('residents_voting', {}))
+
+            if was_visitor:
+                details['visitor_sid'] = None
+                details['visitor_nickname'] = None
+                details['visitor_purpose'] = ''
+                details['status'] = 'role_assignment' # Reset to role assignment
+                socketio.emit('visitor_left_role_reset', {
+                    'message': f"Visitor {nickname} disconnected. Please assign a new visitor.",
+                    'all_users': details['all_connected_users']
+                }, room=details['admin_sid'])
+
+            if was_voting_resident:
+                details['residents_voting'].pop(request.sid, None)
+                # If voting was active and this resident hadn't voted, their 'no_response' vote is implicitly handled by tally logic
+                # If they had voted, their vote is still in 'details['votes']' unless explicitly removed.
+                # Let's assume votes cast before disconnect are kept.
+                # Tally logic uses n_voters from start of round, so 'no_response' naturally covers this.
+
+            # Notify admin about the general user disconnection to update their list
+            emit('user_left_for_roles', {
+                'sid': request.sid, # SID of the user who left
                 'nickname': nickname,
-                'resident_count': len(details['residents']), # Current number of connected residents
-                'vote_counts': details['vote_counts'], 
-                'votes_received_count': len(details['votes'])
+                'all_users': details['all_connected_users'] # Updated list
             }, room=details.get('admin_sid'))
-            print(f"Resident {nickname} ({request.sid}) disconnected from session {session_id}. Remaining connected: {len(details['residents'])}")
-            
-            # If voting was active and this was the last vote needed (or all remaining have voted)
-            # and they were the last one, this could trigger an early tally.
-            current_n_for_round = details.get('n', 0) # 'n' at the start of the round
-            if details['status'] == 'voting' and len(details['votes']) == current_n_for_round and current_n_for_round > 0:
-                 if details.get('timer_object'):
-                    details['timer_object'].cancel()
-                    details['timer_object'] = None
-                 server_tally_votes(session_id)
+
+            # Check if all *remaining* voters have voted if voting was active
+            if details['status'] == 'voting' and details['n_voters'] > 0 and was_voting_resident:
+                all_remaining_designated_voters_have_voted = True
+                # Check if all SIDs in residents_voting (which now excludes the disconnected) are in votes
+                if not details['residents_voting']: # No voters left (e.g. last voter disconnected)
+                     # If there were votes cast before this, and no more voters are left
+                    if len(details['votes']) > 0 or details['n_voters'] == len(details['votes']): # Or if expected votes met
+                         all_remaining_designated_voters_have_voted = True
+                    else: # No voters left and no votes cast (or not enough)
+                        all_remaining_designated_voters_have_voted = False # or true depending on logic
+                else:
+                    for r_sid in details['residents_voting']:
+                        if r_sid not in details['votes']:
+                            all_remaining_designated_voters_have_voted = False
+                            break
+                
+                # If all originally expected voters (n_voters) have submitted, OR
+                # if the number of votes matches the *new* count of residents_voting (meaning those still connected have all voted)
+                # This logic is tricky. The simplest is to rely on the original n_voters for the round.
+                # A disconnect effectively means that person cannot vote.
+                # The 'no_response' count logic in server_tally_votes will handle this.
+                # However, if ALL originally designated voters have either voted OR disconnected,
+                # and among those who did not disconnect, all have voted, then we can tally.
+                
+                # Simpler: if len(votes) == n_voters (original count for the round)
+                # The 'n_voters' for the round is fixed. Disconnected users who didn't vote will be 'no_response'.
+                # If the disconnection was the last action needed to account for all n_voters (either voted or disconnected)
+                # Let server_tally_votes handle it on timer or when actual votes meet n_voters.
+                # This check is mostly for if the *number of votes received* now matches the n_voters,
+                # which wouldn't be changed by a disconnect unless the vote was also removed.
+                if len(details['votes']) == details['n_voters']:
+                    print(f"Disconnect: All {details['n_voters']} expected votes now accounted for in session {session_id}. Triggering early tally.")
+                    if details.get('timer_object'): details['timer_object'].cancel()
+                    socketio.start_background_task(server_tally_votes, session_id)
             break
 
 
 if __name__ == '__main__':
-    socketio.run(app, debug=True, host='0.0.0.0', port=5001)
+    socketio.run(app, debug=True, host='0.0.0.0', port=5001, allow_unsafe_werkzeug=True)

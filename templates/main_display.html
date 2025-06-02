@@ -5,6 +5,7 @@
         <title>Access Control - Main Display</title>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
         <style>
+            /* ... (keep existing styles, or I can re-paste if needed) ... */
             body {
                 font-family: Arial, sans-serif;
                 margin: 20px;
@@ -28,7 +29,8 @@
             }
             #thinkingProcess,
             #votingStatus,
-            #outcomeArea {
+            #outcomeArea,
+            #roleAssignmentSection {
                 margin-top: 20px;
                 padding: 15px;
                 border: 1px solid #eee;
@@ -52,6 +54,10 @@
             button:hover {
                 background-color: #0056b3;
             }
+            button:disabled {
+                background-color: #cccccc;
+                cursor: not-allowed;
+            }
             input[type="text"],
             input[type="number"] {
                 padding: 8px;
@@ -59,26 +65,42 @@
                 border: 1px solid #ccc;
                 border-radius: 4px;
             }
-            .residents-list li {
-                list-style-type: decimal;
+            .user-list li {
+                list-style-type: none;
+                padding: 5px 0;
+                border-bottom: 1px dotted #eee;
+            }
+            .user-list li:last-child {
+                border-bottom: none;
+            }
+            .user-list button {
+                font-size: 12px;
+                padding: 3px 8px;
+                margin-left: 10px;
             }
             .highlight-red {
                 font-weight: bold;
                 color: #d9534f;
-            } /* For denied or errors */
+            }
             .highlight-green {
                 font-weight: bold;
                 color: #28a745;
-            } /* For granted */
+            }
             .highlight-neutral {
                 font-weight: bold;
                 color: #0056b3;
-            } /* For general important info */
+            }
+            .visitor-info-display {
+                background-color: #f9f9f9;
+                border: 1px dashed #ccc;
+                padding: 10px;
+                margin-top: 10px;
+            }
         </style>
     </head>
     <body>
         <div class="container">
-            <h1>Adaptive Access Control Simulation</h1>
+            <h1>Adaptive Access Control Simulation (Admin View)</h1>
             <p>
                 <strong>Session ID:</strong>
                 <span id="sessionIdDisplay" class="highlight-neutral">N/A</span>
@@ -87,34 +109,38 @@
             <button id="createSessionBtn">Create New Access Session</button>
 
             <div id="joinSection" style="display: none">
-                <h2>1. Residents Join Here:</h2>
+                <h2>1. Share Session to Join:</h2>
                 <p>
                     Scan QR Code or go to:
                     <a id="joinLink" href="#" target="_blank"></a>
                 </p>
                 <div id="qrCode"></div>
-                <h3>
-                    Connected Residents (<span
-                        id="residentCount"
-                        class="highlight-neutral"
-                        >0</span
-                    >):
-                </h3>
-                <ul id="residentsList"></ul>
             </div>
 
-            <div id="visitorInputSection" style="display: none">
-                <h2>2. Visitor Interaction (Admin Input):</h2>
-                <div>
-                    <label for="visitorPurposeInput"
-                        >Visitor's Stated Purpose:</label
+            <div id="roleAssignmentSection" style="display: none">
+                <h2>2. Role Assignment:</h2>
+                <h3>
+                    Connected Users (<span id="connectedUsersCount">0</span>):
+                </h3>
+                <ul id="allUsersList" class="user-list"></ul>
+                <p>
+                    <strong>Assigned Visitor:</strong>
+                    <span id="assignedVisitorName" class="highlight-neutral"
+                        >None</span
                     >
-                    <input
-                        type="text"
-                        id="visitorPurposeInput"
-                        value="DHL delivery for Apartment 3"
-                        style="width: 300px"
-                    />
+                </p>
+                <p
+                    id="waitingForPurposeMsg"
+                    style="display: none; color: orange"
+                >
+                    Waiting for visitor to state their purpose...
+                </p>
+            </div>
+
+            <div id="visitorInteractionDisplaySection" style="display: none">
+                <h2>3. Visitor's Stated Purpose:</h2>
+                <div id="visitorPurposeDisplay" class="visitor-info-display">
+                    Waiting for visitor...
                 </div>
                 <div>
                     <label for="timerInput">Voting Timer (seconds):</label>
@@ -126,7 +152,9 @@
                         style="width: 60px"
                     />
                 </div>
-                <button id="startVotingBtn">Initiate Voting Process</button>
+                <button id="startVotingBtn" disabled>
+                    Initiate Voting Process
+                </button>
             </div>
 
             <div id="thinkingProcess" style="display: none">
@@ -145,7 +173,13 @@
             <div id="votingStatus" style="display: none">
                 <h3>Voting Status:</h3>
                 <p>
-                    Total Residents (n):
+                    Voting for:
+                    <strong id="votingForVisitorName" class="highlight-neutral"
+                        >N/A</strong
+                    >
+                </p>
+                <p>
+                    Total Voters (n):
                     <strong id="totalN" class="highlight-neutral">0</strong>
                 </p>
                 <p>
@@ -200,12 +234,17 @@
             const socket = io();
             let currentSessionId = null;
             let votingTimerInterval = null;
+            let allUsersData = {}; // To store all connected users' info {sid: {nickname, role}}
 
+            // DOM Elements
             const createSessionBtn =
                 document.getElementById("createSessionBtn");
             const joinSection = document.getElementById("joinSection");
-            const visitorInputSection = document.getElementById(
-                "visitorInputSection"
+            const roleAssignmentSection = document.getElementById(
+                "roleAssignmentSection"
+            );
+            const visitorInteractionDisplaySection = document.getElementById(
+                "visitorInteractionDisplaySection"
             );
             const thinkingProcessDiv =
                 document.getElementById("thinkingProcess");
@@ -214,16 +253,80 @@
             const outcomeAreaDiv = document.getElementById("outcomeArea");
             const tallyVotesBtn = document.getElementById("tallyVotesBtn");
             const finalOutcomeEl = document.getElementById("finalOutcome");
+            const allUsersListEl = document.getElementById("allUsersList");
+            const assignedVisitorNameEl = document.getElementById(
+                "assignedVisitorName"
+            );
+            const connectedUsersCountEl = document.getElementById(
+                "connectedUsersCount"
+            );
+            const visitorPurposeDisplayEl = document.getElementById(
+                "visitorPurposeDisplay"
+            );
+            const startVotingBtn = document.getElementById("startVotingBtn");
+            const waitingForPurposeMsgEl = document.getElementById(
+                "waitingForPurposeMsg"
+            );
+            const votingForVisitorNameEl = document.getElementById(
+                "votingForVisitorName"
+            );
 
             function logToThinkingProcess(message, clearPrevious = false) {
-                if (clearPrevious) {
-                    thinkingLog.innerHTML = "";
-                }
+                if (clearPrevious) thinkingLog.innerHTML = "";
                 const p = document.createElement("p");
                 p.className = "log-message";
                 p.innerHTML = `[${new Date().toLocaleTimeString()}] ${message}`;
                 thinkingLog.appendChild(p);
                 thinkingLog.scrollTop = thinkingLog.scrollHeight;
+            }
+
+            function renderAllUsersList() {
+                allUsersListEl.innerHTML = ""; // Clear current list
+                let userCount = 0;
+                const currentVisitorSid =
+                    assignedVisitorNameEl.dataset.visitorSid; // Get current visitor SID if any
+
+                for (const sid in allUsersData) {
+                    userCount++;
+                    const userData = allUsersData[sid];
+                    const listItem = document.createElement("li");
+                    let roleText =
+                        userData.role === "unassigned"
+                            ? "(Unassigned)"
+                            : `(${userData.role})`;
+                    if (sid === currentVisitorSid)
+                        roleText = `<strong class="highlight-green">(Visitor)</strong>`;
+
+                    listItem.innerHTML = `<span>${userData.nickname} ${roleText}</span>`;
+
+                    if (sid !== currentVisitorSid) {
+                        // Don't show "Make Visitor" for the current visitor
+                        const assignBtn = document.createElement("button");
+                        assignBtn.textContent = "Make Visitor";
+                        assignBtn.dataset.sid = sid;
+                        assignBtn.className = "assign-visitor-btn";
+                        assignBtn.onclick = function () {
+                            logToThinkingProcess(
+                                `Admin: Assigning ${
+                                    allUsersData[this.dataset.sid].nickname
+                                } as visitor.`
+                            );
+                            socket.emit("admin_assign_visitor_role", {
+                                session_id: currentSessionId,
+                                visitor_sid: this.dataset.sid,
+                            });
+                        };
+                        listItem.appendChild(assignBtn);
+                    }
+                    allUsersListEl.appendChild(listItem);
+                }
+                connectedUsersCountEl.textContent = userCount;
+                // Disable "Make Visitor" buttons if a visitor is already assigned
+                document
+                    .querySelectorAll(".assign-visitor-btn")
+                    .forEach((btn) => {
+                        btn.disabled = !!currentVisitorSid; // Disable if visitor_sid is set
+                    });
             }
 
             createSessionBtn.onclick = () => {
@@ -233,7 +336,7 @@
                 logToThinkingProcess(
                     "Admin: Creating new access session...",
                     true
-                ); // Clear previous logs
+                );
             };
 
             socket.on("session_created", (data) => {
@@ -246,117 +349,146 @@
                 const joinLinkEl = document.getElementById("joinLink");
                 joinLinkEl.href = data.join_url;
                 joinLinkEl.textContent = data.join_url;
+
                 joinSection.style.display = "block";
-                visitorInputSection.style.display = "block";
+                roleAssignmentSection.style.display = "block"; // Show role assignment section
+                visitorInteractionDisplaySection.style.display = "none"; // Hide this initially
                 createSessionBtn.style.display = "none";
-                document.getElementById("startVotingBtn").disabled = false; // Ensure it's enabled for first round
+                startVotingBtn.disabled = true; // Disabled until purpose is received
 
                 logToThinkingProcess(
-                    `System: Session <strong class="highlight-neutral">${currentSessionId}</strong> created. QR code displayed for residents to join.`
+                    `System: Session <strong class="highlight-neutral">${currentSessionId}</strong> created. Status: Role Assignment. Waiting for users to join.`
                 );
             });
 
-            socket.on("resident_joined_notification", (data) => {
-                document.getElementById("residentCount").textContent =
-                    data.resident_count;
-                const listItem = document.createElement("li");
-                listItem.id = `res-${data.sid}`;
-                listItem.textContent = data.nickname;
-                document.getElementById("residentsList").appendChild(listItem);
-                logToThinkingProcess(
-                    `System: Resident '<strong class="highlight-neutral">${data.nickname}</strong>' joined. Total residents: ${data.resident_count}.`
-                );
-                document.getElementById("totalResidentsForVote").textContent =
-                    data.resident_count;
-                document.getElementById("noResponseVotes").textContent =
-                    data.resident_count -
-                    parseInt(
-                        document.getElementById("votesReceived").textContent ||
-                            0
+            socket.on("user_joined_for_roles", (data) => {
+                allUsersData = data.all_users; // Store the complete user data
+                renderAllUsersList();
+                const joinedUser = allUsersData[data.sid];
+                if (joinedUser) {
+                    logToThinkingProcess(
+                        `System: User '<strong class="highlight-neutral">${joinedUser.nickname}</strong>' joined. Please assign roles.`
                     );
+                }
             });
-            socket.on("resident_left_notification", (data) => {
-                document.getElementById("residentCount").textContent =
-                    data.resident_count;
-                const listItem = document.getElementById(`res-${data.sid}`);
-                if (listItem) listItem.remove();
+
+            socket.on("user_left_for_roles", (data) => {
+                allUsersData = data.all_users;
+                const leftUserNickname =
+                    data.nickname || `User SID ${data.sid}`;
                 logToThinkingProcess(
-                    `System: Resident '<strong class="highlight-neutral">${data.nickname}</strong>' left. Total residents: ${data.resident_count}.`
+                    `System: User '<strong class="highlight-neutral">${leftUserNickname}</strong>' left.`
                 );
-
-                document.getElementById("totalN").textContent =
-                    data.resident_count;
-                document.getElementById("totalResidentsForVote").textContent =
-                    data.resident_count;
-
-                document.getElementById("allowVotes").textContent =
-                    data.vote_counts.allow;
-                document.getElementById("denyVotes").textContent =
-                    data.vote_counts.deny;
-                document.getElementById("abstainVotes").textContent =
-                    data.vote_counts.abstain;
-                document.getElementById("votesReceived").textContent =
-                    data.votes_received_count;
-                document.getElementById("noResponseVotes").textContent =
-                    data.resident_count - data.votes_received_count;
+                if (assignedVisitorNameEl.dataset.visitorSid === data.sid) {
+                    // If the visitor left
+                    assignedVisitorNameEl.textContent = "None";
+                    assignedVisitorNameEl.dataset.visitorSid = "";
+                    visitorPurposeDisplayEl.textContent =
+                        "Waiting for visitor...";
+                    startVotingBtn.disabled = true;
+                    waitingForPurposeMsgEl.style.display = "none";
+                    visitorInteractionDisplaySection.style.display = "none";
+                }
+                renderAllUsersList();
             });
 
-            document.getElementById("startVotingBtn").onclick = () => {
-                const purpose = document.getElementById(
-                    "visitorPurposeInput"
-                ).value;
+            socket.on("visitor_role_confirmed", (data) => {
+                assignedVisitorNameEl.textContent = `${data.visitor_nickname} (SID: ${data.visitor_sid})`;
+                assignedVisitorNameEl.dataset.visitorSid = data.visitor_sid; // Store SID for re-rendering list
+                logToThinkingProcess(
+                    `System: <strong class="highlight-green">${data.visitor_nickname}</strong> is now the Visitor. Waiting for them to state purpose.`
+                );
+                waitingForPurposeMsgEl.style.display = "block";
+                visitorInteractionDisplaySection.style.display = "block"; // Show section for purpose display
+                visitorPurposeDisplayEl.textContent =
+                    "Waiting for visitor to submit purpose...";
+                startVotingBtn.disabled = true; // Keep disabled until purpose received
+                renderAllUsersList(); // Re-render to disable "Make Visitor" buttons
+            });
+
+            socket.on("visitor_left_role_reset", (data) => {
+                allUsersData = data.all_users;
+                logToThinkingProcess(
+                    `System: <strong class="highlight-red">${data.message}</strong>`
+                );
+                assignedVisitorNameEl.textContent = "None";
+                assignedVisitorNameEl.dataset.visitorSid = "";
+                visitorPurposeDisplayEl.textContent = "Waiting for visitor...";
+                startVotingBtn.disabled = true;
+                waitingForPurposeMsgEl.style.display = "none";
+                visitorInteractionDisplaySection.style.display = "none"; // Hide if no visitor
+                renderAllUsersList(); // Re-render to enable "Make Visitor" buttons
+            });
+
+            socket.on("purpose_received_from_visitor", (data) => {
+                logToThinkingProcess(
+                    `System: Visitor <strong class="highlight-neutral">${data.visitor_nickname}</strong> stated purpose: "<em स्टाइल="color:blue;">${data.purpose}</em>"`
+                );
+                logToThinkingProcess(
+                    `System: Extracted Info (Simulated): "<em स्टाइल="color:blue;">${data.extracted_info}</em>"`
+                );
+                visitorPurposeDisplayEl.innerHTML = `<strong>Visitor (${data.visitor_nickname}) Purpose:</strong> ${data.purpose}<br><strong>System Extracted:</strong> ${data.extracted_info}`;
+                waitingForPurposeMsgEl.style.display = "none";
+                startVotingBtn.disabled = false; // Enable admin to start voting
+            });
+
+            startVotingBtn.onclick = () => {
                 const timerDuration = parseInt(
                     document.getElementById("timerInput").value
                 );
-
-                if (currentSessionId && purpose && timerDuration > 0) {
+                if (
+                    currentSessionId &&
+                    assignedVisitorNameEl.dataset.visitorSid &&
+                    timerDuration > 0
+                ) {
+                    // Purpose is now on the server, fetched from visitor
                     logToThinkingProcess(
-                        `Admin: Initiating voting round for purpose: "${purpose}" with a ${timerDuration}s timer.`,
+                        `Admin: Initiating voting round. Timer: ${timerDuration}s.`,
                         true
-                    ); // Clear previous logs
+                    ); // Clear previous logs in this div
                     socket.emit("start_voting_round", {
                         session_id: currentSessionId,
-                        visitor_purpose: purpose,
                         timer_duration: timerDuration,
                     });
-                    document.getElementById("startVotingBtn").disabled = true;
+                    startVotingBtn.disabled = true;
                 } else {
                     alert(
-                        "Session not created, purpose is empty, or timer is invalid."
+                        "Visitor not assigned, purpose not stated, or timer is invalid."
                     );
                 }
             };
 
             socket.on("voting_parameters_set", (data) => {
                 logToThinkingProcess(
-                    `System: Visitor stated: '<strong class="highlight-neutral">${data.visitor_purpose}</strong>'.`
+                    `System: Visitor: <strong class="highlight-neutral">${data.visitor_nickname}</strong>. Purpose: "<em style="color:blue;">${data.visitor_purpose}</em>".`
                 );
-                logToThinkingProcess("System: NLP Processing (Simulated)...");
                 logToThinkingProcess(
-                    `System: Extracted Info: '<strong class="highlight-neutral">${data.extracted_info}</strong>'.`
+                    `System: Extracted Info: "<em style="color:blue;">${data.extracted_info}</em>".`
                 );
                 logToThinkingProcess(
                     `System: Determining Voting Parameters...`
                 );
                 logToThinkingProcess(
-                    `System: Total Residents (n) = <strong class="highlight-neutral">${data.n}</strong>.`
+                    `System: Total Voters (n) = <strong class="highlight-neutral">${data.n}</strong>.`
                 );
                 logToThinkingProcess(
                     `System: Votes needed for Approval (t) = <strong class="highlight-neutral">${data.t}</strong>.`
                 );
                 logToThinkingProcess(
-                    `System: Initiating Vote: Sending request to ${data.n} residents. Timer set for <strong class="highlight-neutral">${data.timer_duration}s</strong>.`
+                    `System: Initiating Vote for ${data.n} residents. Timer: <strong class="highlight-neutral">${data.timer_duration}s</strong>.`
                 );
 
                 votingStatusDiv.style.display = "block";
+                votingForVisitorNameEl.textContent = data.visitor_nickname;
                 document.getElementById("totalN").textContent = data.n;
                 document.getElementById("thresholdT").textContent = data.t;
                 document.getElementById("displayVisitorPurpose").textContent =
-                    data.visitor_purpose;
+                    data.visitor_purpose; // For residents
                 document.getElementById("displayExtractedInfo").textContent =
-                    data.extracted_info;
+                    data.extracted_info; // For residents
                 document.getElementById("totalResidentsForVote").textContent =
                     data.n;
+                // ... (reset vote counts and timer display as before) ...
                 document.getElementById("votesReceived").textContent = 0;
                 document.getElementById("allowVotes").textContent = 0;
                 document.getElementById("denyVotes").textContent = 0;
@@ -374,12 +506,8 @@
                     timeLeft--;
                     document.getElementById("timeRemaining").textContent =
                         timeLeft;
-                    if (timeLeft <= 0) {
-                        clearInterval(votingTimerInterval);
-                        // Timer on client side is just for display, server handles actual timeout
-                    }
+                    if (timeLeft <= 0) clearInterval(votingTimerInterval);
                 }, 1000);
-
                 logToThinkingProcess(`System: Waiting for responses...`);
             });
 
@@ -456,21 +584,22 @@
                 }
                 outcomeAreaDiv.style.display = "block";
                 tallyVotesBtn.style.display = "none";
-                document.getElementById("startVotingBtn").disabled = false; // Re-enable for a new round
+                // startVotingBtn.disabled = false; // Keep disabled until purpose for a *new* round is confirmed, or visitor changes
+                // Or enable to allow re-voting on same purpose if desired.
+                // For now, better to keep it disabled. Admin needs to initiate a new context.
                 if (votingTimerInterval) clearInterval(votingTimerInterval);
                 document.getElementById("timeRemaining").textContent = "N/A";
             });
 
             socket.on("error", (data) => {
-                logToThinking_process(
+                logToThinkingProcess(
                     `System Error: <strong class="highlight-red">${data.message}</strong>`
                 );
                 alert(`Error: ${data.message}`);
             });
 
-            // Initial state
             logToThinkingProcess(
-                "System: Main display initialized. Waiting for admin to create a session.",
+                "System: Admin display initialized. Waiting for admin to create a session.",
                 true
             );
         </script>

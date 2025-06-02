@@ -2,7 +2,7 @@
 <html lang="en">
     <head>
         <meta charset="UTF-8" />
-        <title>Resident Voting</title>
+        <title>Access Control Participant</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
         <style>
@@ -24,10 +24,20 @@
                 max-width: 400px;
                 width: 90%;
             }
-            h1 {
+            h1,
+            h2,
+            h3 {
                 color: #0056b3;
             }
-            #visitorInfo {
+            .section {
+                margin-top: 15px;
+                padding-top: 10px;
+                border-top: 1px solid #eee;
+            }
+            .hidden {
+                display: none;
+            }
+            #visitorInfoResidentView {
                 margin-bottom: 20px;
                 padding: 10px;
                 border: 1px solid #eee;
@@ -35,8 +45,8 @@
                 background-color: #e9f5ff;
                 text-align: left;
             }
-            .vote-buttons button {
-                /* Common styles for all vote buttons */
+            .vote-buttons button,
+            #submitPurposeBtnClient {
                 display: block;
                 width: 100%;
                 padding: 15px;
@@ -45,44 +55,61 @@
                 border-radius: 5px;
                 border: none;
                 cursor: pointer;
-                transition: background-color 0.2s ease, opacity 0.2s ease; /* Smooth transitions */
+            }
+            .vote-buttons button:disabled {
+                background-color: #ccc !important;
+                color: #666 !important;
+                opacity: 0.7 !important;
+                cursor: not-allowed !important;
+            }
+            #submitPurposeBtnClient {
+                background-color: #007bff;
+                color: white;
+            }
+            #submitPurposeBtnClient:disabled {
+                background-color: #ccc;
             }
 
-            /* Active State Styles */
+            /* Active State Styles - Copied from previous good state */
             #allowBtn {
-                background-color: #28a745; /* Green */
+                background-color: #28a745;
                 color: white;
             }
             #denyBtn {
-                background-color: #dc3545; /* Red */
+                background-color: #dc3545;
                 color: white;
             }
             #abstainBtn {
-                background-color: #ffc107; /* Yellow */
+                background-color: #ffc107;
                 color: black;
             }
 
             /* Hover State Styles for Active Buttons */
             #allowBtn:not(:disabled):hover {
-                background-color: #218838; /* Darker green */
+                background-color: #218838;
             }
             #denyBtn:not(:disabled):hover {
-                background-color: #c82333; /* Darker red */
+                background-color: #c82333;
             }
             #abstainBtn:not(:disabled):hover {
-                background-color: #e0a800; /* Darker yellow */
+                background-color: #e0a800;
+            }
+            #submitPurposeBtnClient:not(:disabled):hover {
+                background-color: #0056b3;
             }
 
             /* Disabled State Styles - Using IDs for specificity */
             #allowBtn:disabled,
             #denyBtn:disabled,
             #abstainBtn:disabled {
-                background-color: #cccccc; /* Standard disabled gray */
-                color: #666666; /* Darker gray text for readability */
-                opacity: 0.65; /* Make them look faded */
+                background-color: #cccccc;
+                color: #666666;
+                opacity: 0.65;
                 cursor: not-allowed;
             }
-            #statusMessage {
+
+            #statusMessage,
+            #roleStatusMessage {
                 margin-top: 15px;
                 font-weight: bold;
             }
@@ -91,7 +118,8 @@
                 font-style: italic;
                 color: #0056b3;
             }
-            #outcomeDisplay {
+            #outcomeDisplayResident,
+            #visitorOutcomeMessage {
                 margin-top: 20px;
                 margin-bottom: 15px;
                 font-size: 20px;
@@ -103,24 +131,30 @@
             .outcome-denied {
                 color: #dc3545;
             }
-            input[type="text"] {
+            input[type="text"],
+            textarea {
                 padding: 10px;
                 margin-bottom: 15px;
                 border: 1px solid #ccc;
                 border-radius: 4px;
                 width: calc(100% - 22px);
+                box-sizing: border-box;
+            }
+            textarea {
+                min-height: 60px;
             }
         </style>
     </head>
     <body>
         <div class="container">
-            <h1>Cast Your Vote</h1>
+            <h1>Participant View</h1>
             <p>
-                Session ID: <span id="residentSessionId">{{ session_id }}</span>
+                Session ID: <span id="clientSessionId">{{ session_id }}</span>
             </p>
             <p>Your Name: <span id="myNickname"></span></p>
+            <p id="roleStatusMessage">Connecting...</p>
 
-            <div id="nicknameSection">
+            <div id="nicknameSection" class="section">
                 <input
                     type="text"
                     id="nicknameInput"
@@ -129,25 +163,41 @@
                 <button onclick="joinWithNickname()">Join Session</button>
             </div>
 
-            <div id="votingSection" style="display: none">
-                <div id="outcomeDisplay"></div>
+            <div id="visitorUiSection" class="section hidden">
+                <h2>You are the Visitor</h2>
+                <textarea
+                    id="visitorPurposeInputClient"
+                    placeholder="Please state your purpose of visit here..."
+                ></textarea>
+                <button
+                    id="submitPurposeBtnClient"
+                    onclick="submitVisitorPurpose()"
+                >
+                    Submit Purpose
+                </button>
+                <p id="visitorOutcomeMessage"></p>
+            </div>
+
+            <div id="residentUiSection" class="section hidden">
+                <h2>Resident Voting Panel</h2>
+                <p>Visitor: <strong id="visitorNameForResident">N/A</strong></p>
+                <div id="outcomeDisplayResident"></div>
                 <div id="yourVoteDisplay"></div>
                 <h3>Visitor Information:</h3>
-                <div id="visitorInfo">
+                <div id="visitorInfoResidentView">
                     <p>
                         <strong>Purpose:</strong>
-                        <span id="visitorPurposeText"
-                            >Waiting for details...</span
+                        <span id="visitorPurposeTextResidentView"
+                            >Waiting...</span
                         >
                     </p>
                     <p>
-                        <strong>Extracted by System:</strong>
-                        <span id="visitorExtractedText"
-                            >Waiting for details...</span
+                        <strong>System Extracted:</strong>
+                        <span id="visitorExtractedTextResidentView"
+                            >Waiting...</span
                         >
                     </p>
                 </div>
-
                 <div class="vote-buttons">
                     <button id="allowBtn" onclick="sendVote('allow')" disabled>
                         Allow Entry
@@ -169,76 +219,114 @@
 
         <script>
             const socket = io();
-            const currentSessionId =
-                document.getElementById("residentSessionId").textContent;
-            let nickname = "";
+            const clientSessionIdEl =
+                document.getElementById("clientSessionId");
+            const currentSessionId = clientSessionIdEl
+                ? clientSessionIdEl.textContent
+                : null;
+            let myCurrentNickname = "";
+            let currentUserRole = "unassigned"; // 'unassigned', 'visitor', 'resident'
 
-            const nicknameSection = document.getElementById("nicknameSection");
-            const votingSection = document.getElementById("votingSection");
-            const statusMessage = document.getElementById("statusMessage");
+            // DOM Elements
+            const nicknameSectionEl =
+                document.getElementById("nicknameSection");
+            const visitorUiSectionEl =
+                document.getElementById("visitorUiSection");
+            const residentUiSectionEl =
+                document.getElementById("residentUiSection");
+            const roleStatusMessageEl =
+                document.getElementById("roleStatusMessage");
+            const statusMessageEl = document.getElementById("statusMessage");
+            const myNicknameEl = document.getElementById("myNickname");
+
+            // Visitor UI elements
+            const visitorPurposeInputClientEl = document.getElementById(
+                "visitorPurposeInputClient"
+            );
+            const submitPurposeBtnClientEl = document.getElementById(
+                "submitPurposeBtnClient"
+            );
+            const visitorOutcomeMessageEl = document.getElementById(
+                "visitorOutcomeMessage"
+            );
+
+            // Resident UI elements
+            const visitorNameForResidentEl = document.getElementById(
+                "visitorNameForResident"
+            );
+            const outcomeDisplayResidentEl = document.getElementById(
+                "outcomeDisplayResident"
+            );
+            const yourVoteDisplayEl =
+                document.getElementById("yourVoteDisplay");
+            const visitorPurposeTextResidentViewEl = document.getElementById(
+                "visitorPurposeTextResidentView"
+            );
+            const visitorExtractedTextResidentViewEl = document.getElementById(
+                "visitorExtractedTextResidentView"
+            );
             const voteButtons = document.querySelectorAll(
                 ".vote-buttons button"
             );
-            const yourVoteDisplay = document.getElementById("yourVoteDisplay");
-            const outcomeDisplay = document.getElementById("outcomeDisplay");
-            const visitorPurposeText =
-                document.getElementById("visitorPurposeText");
-            const visitorExtractedText = document.getElementById(
-                "visitorExtractedText"
-            );
+
+            function updateUIVisibility() {
+                nicknameSectionEl.classList.add("hidden");
+                visitorUiSectionEl.classList.add("hidden");
+                residentUiSectionEl.classList.add("hidden");
+
+                if (currentUserRole === "unassigned") {
+                    nicknameSectionEl.classList.remove("hidden"); // Should be hidden after join, show waiting msg
+                    roleStatusMessageEl.textContent = myCurrentNickname
+                        ? `Hi ${myCurrentNickname}. Waiting for admin to assign role or start process.`
+                        : "Enter nickname to join.";
+                } else if (currentUserRole === "visitor") {
+                    visitorUiSectionEl.classList.remove("hidden");
+                    roleStatusMessageEl.textContent = `Hi ${myCurrentNickname}. You are the Visitor.`;
+                } else if (currentUserRole === "resident") {
+                    residentUiSectionEl.classList.remove("hidden");
+                    roleStatusMessageEl.textContent = `Hi ${myCurrentNickname}. You are a Resident (Voter).`;
+                }
+            }
 
             function setVoteButtonsDisabled(disabled) {
                 voteButtons.forEach((b) => (b.disabled = disabled));
             }
 
             function joinWithNickname() {
-                nickname = document
-                    .getElementById("nicknameInput")
-                    .value.trim();
-                if (!nickname) {
-                    nickname = `Resident${Math.floor(Math.random() * 1000)}`;
+                const nicknameInputEl =
+                    document.getElementById("nicknameInput");
+                myCurrentNickname = nicknameInputEl
+                    ? nicknameInputEl.value.trim()
+                    : "";
+                if (!myCurrentNickname) {
+                    myCurrentNickname = `User${Math.floor(
+                        Math.random() * 1000
+                    )}`;
                 }
-                document.getElementById("myNickname").textContent = nickname;
+                myNicknameEl.textContent = myCurrentNickname;
+                nicknameSectionEl.classList.add("hidden"); // Hide nickname input after submission
+                roleStatusMessageEl.textContent = `Joining as ${myCurrentNickname}...`;
                 socket.emit("join_session_resident", {
                     session_id: currentSessionId,
-                    nickname: nickname,
+                    nickname: myCurrentNickname,
                 });
             }
 
-            socket.on("connect", () => {
-                statusMessage.textContent =
-                    "Connected. Enter nickname to join session.";
-                setVoteButtonsDisabled(true); // Ensure buttons are disabled on fresh connect
-            });
-
-            socket.on("nickname_taken_error", (data) => {
-                statusMessage.textContent = `Error: ${data.message}`;
-                // Re-enable the nickname input section so the user can try a different name
-                nicknameSection.style.display = "block";
-                votingSection.style.display = "none"; // Hide voting section
-                document.getElementById("myNickname").textContent = ""; // Clear potentially set nickname
-                document.getElementById("nicknameInput").focus(); // Focus on input
-                document.getElementById("nicknameInput").select(); // Select current text for easy replacement
-            });
-
-            socket.on("joined_successfully", (data) => {
-                statusMessage.textContent = `Joined session ${data.session_id} as ${data.nickname}. Waiting for vote...`;
-                nicknameSection.style.display = "none";
-                votingSection.style.display = "block";
-                yourVoteDisplay.textContent = ""; // Clear previous vote
-                outcomeDisplay.textContent = ""; // Clear previous outcome
-                setVoteButtonsDisabled(true); // Keep disabled until voting_started
-            });
-
-            socket.on("voting_started", (data) => {
-                visitorPurposeText.textContent = data.visitor_purpose;
-                visitorExtractedText.textContent = data.extracted_info;
-                setVoteButtonsDisabled(false); // Enable voting buttons
-                yourVoteDisplay.textContent = ""; // Clear previous vote message
-                outcomeDisplay.textContent = ""; // Clear previous outcome
-                statusMessage.textContent =
-                    "Voting is now open. Please cast your vote.";
-            });
+            function submitVisitorPurpose() {
+                const purpose = visitorPurposeInputClientEl.value.trim();
+                if (purpose) {
+                    socket.emit("visitor_submit_purpose", {
+                        session_id: currentSessionId,
+                        purpose: purpose,
+                    });
+                    submitPurposeBtnClientEl.disabled = true;
+                    visitorPurposeInputClientEl.disabled = true;
+                    statusMessageEl.textContent =
+                        "Purpose submitted. Waiting for admin to start voting.";
+                } else {
+                    statusMessageEl.textContent = "Please enter your purpose.";
+                }
+            }
 
             function sendVote(voteType) {
                 socket.emit("submit_vote", {
@@ -246,37 +334,133 @@
                     vote_type: voteType,
                 });
                 setVoteButtonsDisabled(true);
-                yourVoteDisplay.textContent = `You voted: ${voteType.toUpperCase()}`;
-                statusMessage.textContent = `Your vote (${voteType.toUpperCase()}) was recorded. Waiting for results...`;
+                yourVoteDisplayEl.textContent = `You voted: ${voteType.toUpperCase()}`;
+                statusMessageEl.textContent = `Your vote (${voteType.toUpperCase()}) recorded. Waiting for results...`;
             }
 
+            socket.on("connect", () => {
+                roleStatusMessageEl.textContent =
+                    "Connected. Enter nickname to join session.";
+                updateUIVisibility(); // Show nickname section initially
+            });
+
+            socket.on("joined_successfully_waiting_role", (data) => {
+                myCurrentNickname = data.nickname; // Ensure nickname is set from server confirmation
+                myNicknameEl.textContent = myCurrentNickname;
+                currentUserRole = "unassigned"; // Explicitly set state
+                updateUIVisibility();
+                statusMessageEl.textContent = ""; // Clear general status
+            });
+
+            socket.on("role_assigned", (data) => {
+                currentUserRole = data.your_role;
+                updateUIVisibility();
+                statusMessageEl.textContent = ""; // Clear previous status
+                if (currentUserRole === "resident") {
+                    visitorNameForResidentEl.textContent =
+                        data.visitor_nickname || "N/A";
+                    setVoteButtonsDisabled(true); // Residents start with buttons disabled
+                    outcomeDisplayResidentEl.textContent = "";
+                    yourVoteDisplayEl.textContent = "";
+                    roleStatusMessageEl.textContent = `Hi ${myCurrentNickname}. You are a Resident. Waiting for voting on visitor: ${
+                        data.visitor_nickname || "N/A"
+                    }.`;
+                } else if (currentUserRole === "visitor") {
+                    visitorPurposeInputClientEl.value = ""; // Clear any previous text
+                    visitorPurposeInputClientEl.disabled = false;
+                    submitPurposeBtnClientEl.disabled = false;
+                    visitorOutcomeMessageEl.textContent = "";
+                    roleStatusMessageEl.textContent = `Hi ${myCurrentNickname}. You are the Visitor. Please state your purpose.`;
+                }
+            });
+
+            socket.on("purpose_submission_confirmed", (data) => {
+                if (currentUserRole === "visitor") {
+                    statusMessageEl.textContent =
+                        data.status ||
+                        "Purpose submitted. Waiting for voting to start.";
+                    submitPurposeBtnClientEl.disabled = true;
+                    visitorPurposeInputClientEl.disabled = true;
+                }
+            });
+
+            socket.on("voting_started", (data) => {
+                // For Residents
+                if (currentUserRole === "resident") {
+                    visitorNameForResidentEl.textContent =
+                        data.visitor_nickname || "N/A";
+                    visitorPurposeTextResidentViewEl.textContent =
+                        data.visitor_purpose;
+                    visitorExtractedTextResidentViewEl.textContent =
+                        data.extracted_info;
+                    setVoteButtonsDisabled(false);
+                    yourVoteDisplayEl.textContent = "";
+                    outcomeDisplayResidentEl.textContent = "";
+                    statusMessageEl.textContent =
+                        "Voting is now open. Please cast your vote.";
+                }
+            });
+
             socket.on("vote_submitted_confirmation", (data) => {
-                console.log("Vote confirmed by server:", data.status);
+                // For Residents
+                if (currentUserRole === "resident") {
+                    console.log("Vote confirmed by server:", data.status);
+                    // UI update already handled by sendVote()
+                }
             });
 
             socket.on("voting_ended", (data) => {
-                statusMessage.textContent = `Voting has ended.`;
-                outcomeDisplay.textContent = `Outcome: ${data.outcome}`;
-                if (data.outcome === "Access Granted") {
-                    outcomeDisplay.className = "outcome-granted";
-                } else {
-                    outcomeDisplay.className = "outcome-denied";
+                // For Residents
+                if (currentUserRole === "resident") {
+                    statusMessageEl.textContent = `Voting has ended.`;
+                    outcomeDisplayResidentEl.textContent = `Outcome: ${data.outcome}`;
+                    outcomeDisplayResidentEl.className =
+                        data.outcome === "Access Granted"
+                            ? "outcome-granted"
+                            : "outcome-denied";
+                    setVoteButtonsDisabled(true);
                 }
-                setVoteButtonsDisabled(true); // Ensure buttons are disabled
+            });
+
+            socket.on("visitor_outcome", (data) => {
+                // For Visitor
+                if (currentUserRole === "visitor") {
+                    statusMessageEl.textContent = `Voting has ended.`;
+                    visitorOutcomeMessageEl.textContent = `Outcome: ${data.outcome}`;
+                    visitorOutcomeMessageEl.className =
+                        data.outcome === "Access Granted"
+                            ? "outcome-granted"
+                            : "outcome-denied";
+                    statusMessageEl.textContent = "Process complete.";
+                    // Visitor UI might reset or stay on outcome
+                }
             });
 
             socket.on("error", (data) => {
-                statusMessage.textContent = `Error: ${data.message}`;
-                // Potentially re-enable buttons or handle state if error is recoverable for voting
+                statusMessageEl.textContent = `Error: ${data.message}`;
+            });
+
+            socket.on("nickname_taken_error", (data) => {
+                statusMessageEl.textContent = `Error: ${data.message}`;
+                nicknameSectionEl.classList.remove("hidden"); // Show nickname input again
+                myNicknameEl.textContent = ""; // Clear potentially set nickname
+                document.getElementById("nicknameInput").focus();
+                currentUserRole = "unassigned"; // Reset role
+                updateUIVisibility();
             });
 
             socket.on("disconnect", () => {
-                statusMessage.textContent = "Disconnected from server.";
-                setVoteButtonsDisabled(true);
+                roleStatusMessageEl.textContent = "Disconnected from server.";
+                statusMessageEl.textContent = "";
+                setVoteButtonsDisabled(true); // Disable all interactive elements
+                // Optionally hide all sections except a disconnected message
+                visitorUiSectionEl.classList.add("hidden");
+                residentUiSectionEl.classList.add("hidden");
+                nicknameSectionEl.classList.add("hidden");
             });
 
-            // Initial state on page load
-            setVoteButtonsDisabled(true);
+            // Initial UI state
+            updateUIVisibility();
         </script>
     </body>
 </html>
