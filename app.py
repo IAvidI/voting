@@ -185,7 +185,8 @@ def handle_visitor_submit_purpose(data):
         current_session = active_sessions[session_id]
         if request.sid == current_session.get('visitor_sid') and current_session['status'] == 'waiting_for_purpose':
             current_session['visitor_purpose'] = purpose_text
-            current_session['extracted_info'] = f"Purpose: {purpose_text} (Visitor: {current_session['visitor_nickname']})" # Simple extraction
+            # current_session['extracted_info'] = f"Purpose: {purpose_text} (Visitor: {current_session['visitor_nickname']})" # Simple extraction
+            current_session['extracted_info'] = purpose_text # Simple extraction
             current_session['status'] = 'ready_for_voting'
 
             emit('purpose_received_from_visitor', { # To Admin
@@ -263,6 +264,49 @@ def handle_tally_votes_request(data):
             server_tally_votes(session_id)
         else:
             emit('error', {'message': 'Not in voting state to tally manually.'})
+
+@socketio.on('admin_reset_round')
+def handle_admin_reset_round(data):
+    session_id = data.get('session_id')
+    if session_id in active_sessions and active_sessions[session_id]['admin_sid'] == request.sid:
+        current_session = active_sessions[session_id]
+
+        print(f"Admin resetting round for session {session_id}")
+
+        # Cancel any existing timer
+        if current_session.get('timer_object'):
+            current_session['timer_object'].cancel()
+            current_session['timer_object'] = None
+
+        # Reset session variables for a new round
+        current_session['visitor_sid'] = None
+        current_session['visitor_nickname'] = None
+        current_session['visitor_purpose'] = ''
+        current_session['extracted_info'] = ''
+        current_session['votes'] = {}
+        current_session['vote_counts'] = {'allow': 0, 'deny': 0, 'abstain': 0, 'no_response': 0}
+        current_session['outcome'] = ''
+        current_session['n_voters'] = 0
+        current_session['t_threshold'] = 0
+        current_session['status'] = 'role_assignment' # Back to role assignment phase
+
+        # Reset roles for all connected users and notify them
+        for sid, user_data in current_session['all_connected_users'].items():
+            user_data['role'] = 'unassigned' # Reset their role
+            socketio.emit('role_assigned', {
+                'your_role': 'unassigned',
+                'visitor_nickname': None # No visitor assigned yet
+            }, room=sid)
+        
+        # Notify admin that reset is done and to re-render their user list for assignment
+        emit('round_was_reset', {
+            'all_users': current_session['all_connected_users'],
+            'message': 'Round has been reset. Please assign roles.'
+        }, room=current_session['admin_sid'])
+        
+        print(f"Session {session_id} reset to 'role_assignment'. All users set to 'unassigned'.")
+    else:
+        emit('error', {'message': 'Failed to reset round. Session/Admin mismatch.'})
 
 # --- User Client Events ---
 @socketio.on('join_session_resident') # Renamed from old file for clarity with roles

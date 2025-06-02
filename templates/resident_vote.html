@@ -183,7 +183,7 @@
 
             <div id="residentUiSection" class="section hidden">
                 <h2>Resident Voting Panel</h2>
-                <p>Visitor: <strong id="visitorNameForResident">N/A</strong></p>
+                <!-- <p>Visitor: <strong id="visitorNameForResident">N/A</strong></p> -->
                 <div id="outcomeDisplayResident"></div>
                 <div id="yourVoteDisplay"></div>
                 <h3>Visitor Information:</h3>
@@ -254,9 +254,9 @@
             );
 
             // Resident UI elements
-            const visitorNameForResidentEl = document.getElementById(
-                "visitorNameForResident"
-            );
+            // const visitorNameForResidentEl = document.getElementById(
+            //     "visitorNameForResident"
+            // );
             const outcomeDisplayResidentEl = document.getElementById(
                 "outcomeDisplayResident"
             );
@@ -387,24 +387,41 @@
             });
 
             socket.on("role_assigned", (data) => {
-                myCurrentNickname =
-                    myNicknameEl.textContent || data.visitor_nickname || "User"; // Ensure myCurrentNickname is up-to-date
                 currentUserRole = data.your_role;
-                updateUIVisibility();
-                statusMessageEl.textContent = ""; // Clear previous status
+                // myCurrentNickname should still be valid for this user unless they are brand new
+                if (!myCurrentNickname && data.your_role !== "unassigned") {
+                    // This case should ideally not happen if join flow is correct, but as a fallback
+                    myCurrentNickname = "User"; // Or fetch if server sent updated nickname list
+                    myNicknameEl.textContent = myCurrentNickname;
+                }
+
+                updateUIVisibility(); // This function will handle showing the correct section
+
+                statusMessageEl.textContent = "";
                 if (currentUserRole === "resident") {
-                    visitorNameForResidentEl.textContent =
-                        data.visitor_nickname || "N/A";
+                    // visitorNameForResidentEl.textContent =
+                    //     data.visitor_nickname || "N/A";
                     setVoteButtonsDisabled(true);
                     outcomeDisplayResidentEl.textContent = "";
                     yourVoteDisplayEl.textContent = "";
-                    // roleStatusMessageEl is already set by updateUIVisibility
+                    // roleStatusMessageEl updated by updateUIVisibility
+                    if (data.visitor_nickname) {
+                        roleStatusMessageEl.textContent = `Hi ${myCurrentNickname}. You are a Resident. Waiting for voting on visitor: ${data.visitor_nickname}.`;
+                    } else {
+                        roleStatusMessageEl.textContent = `Hi ${myCurrentNickname}. You are a Resident. Waiting for new round setup.`;
+                    }
                 } else if (currentUserRole === "visitor") {
                     visitorPurposeInputClientEl.value = "";
                     visitorPurposeInputClientEl.disabled = false;
                     submitPurposeBtnClientEl.disabled = false;
                     visitorOutcomeMessageEl.textContent = "";
-                    // roleStatusMessageEl is already set by updateUIVisibility
+                    // roleStatusMessageEl updated by updateUIVisibility
+                } else if (currentUserRole === "unassigned") {
+                    // updateUIVisibility will set: "Hi [nickname]. Waiting for admin to assign role..."
+                    // Clear any previous voting specific displays
+                    outcomeDisplayResidentEl.textContent = "";
+                    yourVoteDisplayEl.textContent = "";
+                    visitorOutcomeMessageEl.textContent = "";
                 }
             });
 
@@ -421,8 +438,8 @@
             socket.on("voting_started", (data) => {
                 // For Residents
                 if (currentUserRole === "resident") {
-                    visitorNameForResidentEl.textContent =
-                        data.visitor_nickname || "N/A";
+                    // visitorNameForResidentEl.textContent =
+                    //     data.visitor_nickname || "N/A";
                     visitorPurposeTextResidentViewEl.textContent =
                         data.visitor_purpose;
                     visitorExtractedTextResidentViewEl.textContent =

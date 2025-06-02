@@ -227,6 +227,7 @@
             <div id="outcomeArea" style="display: none">
                 <h3>Outcome:</h3>
                 <p id="finalOutcome"></p>
+                <button id="resetRoundBtn" style="display: none;">Start New Round / Reassign Roles</button> </div>
             </div>
         </div>
 
@@ -270,6 +271,7 @@
             const votingForVisitorNameEl = document.getElementById(
                 "votingForVisitorName"
             );
+            const resetRoundBtn = document.getElementById("resetRoundBtn");
 
             function logToThinkingProcess(message, clearPrevious = false) {
                 if (clearPrevious) thinkingLog.innerHTML = "";
@@ -281,26 +283,22 @@
             }
 
             function renderAllUsersList() {
-                allUsersListEl.innerHTML = ""; // Clear current list
+                allUsersListEl.innerHTML = ""; 
                 let userCount = 0;
-                const currentVisitorSid =
-                    assignedVisitorNameEl.dataset.visitorSid; // Get current visitor SID if any
+                const currentVisitorSidFromDataset = assignedVisitorNameEl.dataset.visitorSid; // Read from dataset
 
                 for (const sid in allUsersData) {
                     userCount++;
                     const userData = allUsersData[sid];
                     const listItem = document.createElement("li");
-                    let roleText =
-                        userData.role === "unassigned"
-                            ? "(Unassigned)"
-                            : `(${userData.role})`;
-                    if (sid === currentVisitorSid)
+                    let roleText = userData.role === 'unassigned' ? '(Unassigned)' : `(${userData.role})`;
+                    if (sid === currentVisitorSidFromDataset) { // Compare with SID from dataset
                         roleText = `<strong class="highlight-green">(Visitor)</strong>`;
-
+                    }
+                    
                     listItem.innerHTML = `<span>${userData.nickname} ${roleText}</span>`;
 
-                    if (sid !== currentVisitorSid) {
-                        // Don't show "Make Visitor" for the current visitor
+                    if (sid !== currentVisitorSidFromDataset) { 
                         const assignBtn = document.createElement("button");
                         assignBtn.textContent = "Make Visitor";
                         assignBtn.dataset.sid = sid;
@@ -321,12 +319,9 @@
                     allUsersListEl.appendChild(listItem);
                 }
                 connectedUsersCountEl.textContent = userCount;
-                // Disable "Make Visitor" buttons if a visitor is already assigned
-                document
-                    .querySelectorAll(".assign-visitor-btn")
-                    .forEach((btn) => {
-                        btn.disabled = !!currentVisitorSid; // Disable if visitor_sid is set
-                    });
+                document.querySelectorAll(".assign-visitor-btn").forEach((btn) => {
+                    btn.disabled = !!currentVisitorSidFromDataset; // Disable if visitor_sid (from dataset) is set
+                });
             }
 
             createSessionBtn.onclick = () => {
@@ -551,6 +546,37 @@
                 }
             };
 
+            resetRoundBtn.onclick = () => {
+                if (currentSessionId) {
+                    logToThinkingProcess("Admin: Requesting to start a new round/reassign roles.");
+                    socket.emit('admin_reset_round', { session_id: currentSessionId });
+                    resetRoundBtn.style.display = "none"; // Hide it after clicking
+                }
+            };
+
+            socket.on("round_was_reset", (data) => {
+                logToThinkingProcess(`System: ${data.message}`);
+                
+                allUsersData = data.all_users; // Update with potentially new roles (all unassigned)
+                
+                // Reset UI elements for new round
+                assignedVisitorNameEl.textContent = "None";
+                assignedVisitorNameEl.dataset.visitorSid = ""; // Clear stored visitor SID
+                
+                visitorPurposeDisplayEl.textContent = "Waiting for visitor...";
+                visitorInteractionDisplaySection.style.display = "none"; // Hide visitor purpose section
+                waitingForPurposeMsgEl.style.display = "none";
+
+                votingStatusDiv.style.display = "none"; // Hide old voting status
+                outcomeAreaDiv.style.display = "none";  // Hide old outcome
+                
+                roleAssignmentSection.style.display = "block"; // Ensure role assignment is visible
+                renderAllUsersList(); // This will re-enable "Make Visitor" buttons as visitor_sid is now null
+
+                startVotingBtn.disabled = true; // Voting can't start until new visitor and purpose
+                resetRoundBtn.style.display = "none"; // Ensure it's hidden until next tally
+            });
+
             socket.on("voting_ended_by_server", (data) => {
                 // New event for server-triggered tally (e.g. timer)
                 logToThinkingProcess(
@@ -589,6 +615,8 @@
                 // For now, better to keep it disabled. Admin needs to initiate a new context.
                 if (votingTimerInterval) clearInterval(votingTimerInterval);
                 document.getElementById("timeRemaining").textContent = "N/A";
+                resetRoundBtn.style.display = "inline-block"; // Show the reset button
+                startVotingBtn.disabled = true; // Keep start voting disabled until new setup
             });
 
             socket.on("error", (data) => {
