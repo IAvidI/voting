@@ -146,6 +146,79 @@
             textarea {
                 min-height: 60px;
             }
+            .nlp-details-container {
+                /* Container for NLP chips on resident page */
+                margin-top: 10px;
+                padding: 10px;
+                background-color: #f0f8ff;
+                border: 1px solid #cce5ff;
+                border-radius: 5px;
+                text-align: left; /* Align text to left inside this container */
+            }
+            .nlp-details-container p {
+                margin: 8px 0;
+                font-size: 0.95em;
+            }
+            .nlp-details-container strong {
+                color: #004085;
+            }
+            .chip {
+                display: inline-block;
+                padding: 0.3em 0.7em;
+                font-size: 0.85em;
+                font-weight: 500;
+                line-height: 1;
+                color: #fff;
+                text-align: center;
+                white-space: nowrap;
+                vertical-align: baseline;
+                border-radius: 0.25rem;
+                margin: 2px 4px 2px 0;
+            }
+            .chip-intent {
+                background-color: #007bff;
+            }
+            .chip-category {
+                background-color: #17a2b8;
+            }
+            .chip-target {
+                background-color: #6f42c1;
+            }
+            .chip-entity {
+                background-color: #28a745;
+            } /* Default entity color if not more specific */
+            .chip-person {
+                background-color: #20c997;
+            } /* Tealish green for PERSON */
+            .chip-org {
+                background-color: #fd7e14;
+            } /* Orange for ORG */
+            .chip-loc {
+                background-color: #ffc107;
+                color: #212529;
+            } /* Yellow for LOC */
+            .chip-cardinal {
+                background-color: #6c757d;
+            } /* Gray for CARDINAL */
+            .chip-default {
+                background-color: #6c757d;
+            }
+            .chip-entity.chip-person {
+                background-color: #20c997;
+            } /* Tealish green for PERSON */
+            .chip-entity.chip-org {
+                background-color: #fd7e14;
+            } /* Orange for ORG */
+            .chip-entity.chip-loc {
+                background-color: #ffc107;
+                color: #212529;
+            } /* Yellow for LOC/GPE */
+            .chip-entity.chip-cardinal {
+                background-color: #6c757d;
+            } /* Gray for CARDINAL/Numerical */
+            .chip-entity.chip-default {
+                background-color: #28a745;
+            } /* Default Green if not matched */
         </style>
     </head>
     <body>
@@ -186,21 +259,20 @@
                 <!-- <p>Visitor: <strong id="visitorNameForResident">N/A</strong></p> -->
                 <div id="outcomeDisplayResident"></div>
                 <div id="yourVoteDisplay"></div>
+
                 <h3>Visitor Information:</h3>
-                <div id="visitorInfoResidentView">
+                <div id="visitorInfoContainerResidentView">
                     <p>
-                        <strong>Purpose:</strong>
-                        <span id="visitorPurposeTextResidentView"
-                            >Waiting...</span
-                        >
+                        <strong>Stated Purpose:</strong>
+                        <em id="visitorPurposeTextResidentView">Waiting...</em>
                     </p>
-                    <p>
-                        <strong>System Extracted:</strong>
-                        <span id="visitorExtractedTextResidentView"
-                            >Waiting...</span
-                        >
-                    </p>
+                    <div
+                        id="nlpAnalysisDisplayResident"
+                        class="nlp-details-container"
+                        style="display: none"
+                    ></div>
                 </div>
+
                 <div class="vote-buttons">
                     <button id="allowBtn" onclick="sendVote('allow')" disabled>
                         Allow Entry
@@ -264,6 +336,9 @@
                 document.getElementById("yourVoteDisplay");
             const visitorPurposeTextResidentViewEl = document.getElementById(
                 "visitorPurposeTextResidentView"
+            );
+            const nlpAnalysisDisplayResidentEl = document.getElementById(
+                "nlpAnalysisDisplayResident"
             );
             const visitorExtractedTextResidentViewEl = document.getElementById(
                 "visitorExtractedTextResidentView"
@@ -406,7 +481,7 @@
                     yourVoteDisplayEl.textContent = "";
                     // roleStatusMessageEl updated by updateUIVisibility
                     if (data.visitor_nickname) {
-                        roleStatusMessageEl.textContent = `Hi ${myCurrentNickname}. You are a Resident. Waiting for voting on visitor: ${data.visitor_nickname}.`;
+                        roleStatusMessageEl.textContent = `Hi ${myCurrentNickname}. You are a Resident.`;
                     } else {
                         roleStatusMessageEl.textContent = `Hi ${myCurrentNickname}. You are a Resident. Waiting for new round setup.`;
                     }
@@ -438,12 +513,73 @@
             socket.on("voting_started", (data) => {
                 // For Residents
                 if (currentUserRole === "resident") {
-                    // visitorNameForResidentEl.textContent =
-                    //     data.visitor_nickname || "N/A";
+                    // visitorNameForResidentEl.textContent = data.visitor_nickname || "N/A";
+                    // Display both raw purpose and the "extracted_info" from NLP
                     visitorPurposeTextResidentViewEl.textContent =
-                        data.visitor_purpose;
-                    visitorExtractedTextResidentViewEl.textContent =
-                        data.extracted_info;
+                        data.visitor_purpose_raw; // Display raw purpose
+
+                    nlpAnalysisDisplayResidentEl.innerHTML =
+                        "<h4>NLP Analysis:</h4>"; // Clear previous and add title
+                    const summary = data.nlp_summary_for_display; // NEW: use this structured object
+
+                    if (summary) {
+                        let detailsHtml = "";
+                        if (summary.intent && summary.intent !== "N/A") {
+                            detailsHtml += `<p><strong>Intent:</strong> <span class="chip chip-intent">${summary.intent}</span></p>`;
+                        }
+                        if (
+                            summary.visitor_category &&
+                            summary.visitor_category !== "N/A"
+                        ) {
+                            detailsHtml += `<p><strong>Category:</strong> <span class="chip chip-category">${summary.visitor_category}</span></p>`;
+                        }
+                        if (
+                            summary.target_entity &&
+                            summary.target_entity !== "N/A"
+                        ) {
+                            detailsHtml += `<p><strong>Target:</strong> <span class="chip chip-target">${summary.target_entity}</span></p>`;
+                        }
+
+                        if (summary.entities && summary.entities.length > 0) {
+                            let entitiesHtmlContent = ""; // Build the content for the <p> tag
+                            summary.entities.forEach((ent) => {
+                                // ent is an object {text, label}
+                                let chipClass = "chip chip-entity chip-default"; // Default class
+                                const labelLower = ent.label.toLowerCase();
+                                if (labelLower === "person")
+                                    chipClass = "chip hip-entity chip-person";
+                                else if (labelLower === "org")
+                                    chipClass = "chip chip-entity chip-org";
+                                else if (
+                                    labelLower === "loc" ||
+                                    labelLower === "gpe"
+                                )
+                                    chipClass = "chip chip-entity chip-loc";
+                                else if (
+                                    labelLower === "cardinal" ||
+                                    labelLower === "ordinal" ||
+                                    labelLower === "quantity" ||
+                                    labelLower === "money"
+                                )
+                                    chipClass =
+                                        "chip chip-entity chip-cardinal";
+
+                                entitiesHtmlContent += `<span class="${chipClass}">${ent.text} (${ent.label})</span> `;
+                            });
+                            if (entitiesHtmlContent) {
+                                // Only add paragraph if there are entity chips
+                                detailsHtml += `<p><strong>Entities:</strong> ${entitiesHtmlContent}</p>`;
+                            }
+                        }
+                        nlpAnalysisDisplayResidentEl.innerHTML += detailsHtml;
+                        nlpAnalysisDisplayResidentEl.style.display =
+                            detailsHtml.length > 0 ? "block" : "none"; // Show only if there's content
+                    } else {
+                        nlpAnalysisDisplayResidentEl.innerHTML +=
+                            "<p>No detailed NLP analysis available.</p>";
+                        nlpAnalysisDisplayResidentEl.style.display = "block";
+                    }
+
                     setVoteButtonsDisabled(false);
                     yourVoteDisplayEl.textContent = "";
                     outcomeDisplayResidentEl.textContent = "";

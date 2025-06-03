@@ -5,7 +5,6 @@
         <title>Access Control - Main Display</title>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
         <style>
-            /* ... (keep existing styles, or I can re-paste if needed) ... */
             body {
                 font-family: Arial, sans-serif;
                 margin: 20px;
@@ -92,10 +91,46 @@
             }
             .visitor-info-display {
                 background-color: #f9f9f9;
-                border: 1px dashed #ccc;
                 padding: 10px;
                 margin-top: 10px;
             }
+            .nlp-details-container {
+                margin-top: 10px;
+                padding: 10px;
+                background-color: #f0f8ff; /* AliceBlue, or another light color */
+                border: 1px solid #cce5ff;
+                border-radius: 5px;
+            }
+            .nlp-details-container p {
+                margin: 8px 0;
+                font-size: 0.95em;
+            }
+            .nlp-details-container strong {
+                color: #004085; /* Darker blue for labels */
+            }
+            .chip {
+                display: inline-block;
+                padding: 0.3em 0.7em;
+                font-size: 0.85em;
+                font-weight: 500;
+                line-height: 1;
+                color: #fff;
+                text-align: center;
+                white-space: nowrap;
+                vertical-align: baseline;
+                border-radius: 0.25rem;
+                margin: 2px 4px 2px 0; /* top right bottom left */
+            }
+            .chip-intent { background-color: #007bff; } /* Blue */
+            .chip-category { background-color: #17a2b8; } /* Teal / Info */
+            .chip-target { background-color: #6f42c1; } /* Purple */
+            .chip-entity { background-color: #28a745; } /* Green */
+            .chip-default { background-color: #6c757d; } /* Gray */
+            .chip-entity.chip-person { background-color: #20c997; } /* Tealish green for PERSON */
+            .chip-entity.chip-org { background-color: #fd7e14; }    /* Orange for ORG */
+            .chip-entity.chip-loc { background-color: #ffc107; color: #212529;} /* Yellow for LOC/GPE */
+            .chip-entity.chip-cardinal { background-color: #6c757d; } /* Gray for CARDINAL/Numerical */
+            .chip-entity.chip-default { background-color: #28a745; } /* Default Green if not matched */
         </style>
     </head>
     <body>
@@ -139,8 +174,15 @@
 
             <div id="visitorInteractionDisplaySection" style="display: none">
                 <h2>3. Visitor's Stated Purpose:</h2>
-                <div id="visitorPurposeDisplay" class="visitor-info-display">
+                <!-- <div id="visitorPurposeDisplay" class="visitor-info-display">
                     Waiting for visitor...
+                </div> -->
+                <div id="visitorPurposeDisplayContainer" class="visitor-info-display">
+                    <p><strong>Visitor (<span id="visitorNameInPurposeSection">N/A</span>) Raw Purpose:</strong></p>
+                    <p><em id="rawPurposeTextDisplay">Waiting for visitor...</em></p>
+                    <div id="nlpAnalysisDisplay" class="nlp-details-container" style="display: none;">
+                        <h4>NLP Analysis Details:</h4>
+                        </div>
                 </div>
                 <div>
                     <label for="timerInput">Voting Timer (seconds):</label>
@@ -195,6 +237,13 @@
                 </p>
                 <p>Visitor Purpose: <em id="displayVisitorPurpose"></em></p>
                 <p>Extracted Info: <em id="displayExtractedInfo"></em></p>
+                <!-- <div id="visitorPurposeDisplayContainer" class="visitor-info-display">
+                    <p><strong>Visitor (<span id="visitorNameInPurposeSection">N/A</span>) Raw Purpose:</strong></p>
+                    <p><em id="rawPurposeTextDisplay">Waiting for visitor...</em></p>
+                    <div id="nlpAnalysisDisplay" class="nlp-details-container" style="display: none;">
+                        <h4>NLP Analysis Details:</h4>
+                        </div>
+                </div> -->
                 <p>
                     Votes Received:
                     <strong id="votesReceived" class="highlight-neutral"
@@ -272,6 +321,9 @@
                 "votingForVisitorName"
             );
             const resetRoundBtn = document.getElementById("resetRoundBtn");
+            const visitorNameInPurposeSectionEl = document.getElementById('visitorNameInPurposeSection');
+            const rawPurposeTextDisplayEl = document.getElementById('rawPurposeTextDisplay');
+            const nlpAnalysisDisplayEl = document.getElementById('nlpAnalysisDisplay');
 
             function logToThinkingProcess(message, clearPrevious = false) {
                 if (clearPrevious) thinkingLog.innerHTML = "";
@@ -417,14 +469,58 @@
 
             socket.on("purpose_received_from_visitor", (data) => {
                 logToThinkingProcess(
-                    `System: Visitor <strong class="highlight-neutral">${data.visitor_nickname}</strong> stated purpose: "<em स्टाइल="color:blue;">${data.purpose}</em>"`
+                    `System: Visitor <strong class="highlight-neutral">${data.visitor_nickname}</strong> stated purpose: "<em style="color:blue;">${data.purpose_raw}</em>"`
                 );
-                logToThinkingProcess(
-                    `System: Extracted Info (Simulated): "<em स्टाइल="color:blue;">${data.extracted_info}</em>"`
-                );
-                visitorPurposeDisplayEl.innerHTML = `<strong>Visitor (${data.visitor_nickname}) Purpose:</strong> ${data.purpose}<br><strong>System Extracted:</strong> ${data.extracted_info}`;
+                if (data.log_summary_string) { // Use the new log summary string for thinking log
+                    logToThinkingProcess(
+                        `System: NLP Processed Info (Summary): "<em style="color:blue;">${data.log_summary_string}</em>"`
+                    );
+                }
+
+                visitorNameInPurposeSectionEl.textContent = data.visitor_nickname;
+                rawPurposeTextDisplayEl.textContent = data.purpose_raw;
+
+                nlpAnalysisDisplayEl.innerHTML = '<h4>NLP Analysis Details:</h4>'; // Clear previous and add title
+                const summary = data.nlp_summary_for_display;
+
+                if (summary) {
+                    let detailsHtml = '';
+                    if (summary.intent) {
+                        detailsHtml += `<p><strong>Intent:</strong> <span class="chip chip-intent">${summary.intent}</span></p>`;
+                    }
+                    if (summary.visitor_category) {
+                        detailsHtml += `<p><strong>Category:</strong> <span class="chip chip-category">${summary.visitor_category}</span></p>`;
+                    }
+                    if (summary.target_entity && summary.target_entity !== 'N/A') {
+                        detailsHtml += `<p><strong>Target:</strong> <span class="chip chip-target">${summary.target_entity}</span></p>`;
+                    }
+
+                    if (summary.entities && summary.entities.length > 0) {
+                        if (summary.entities && summary.entities.length > 0) {
+                        let entitiesHtmlContent = ""; // Build the content for the <p> tag
+                        summary.entities.forEach(ent => { // ent is an object like {text: 'Mike', label: 'PERSON'}
+                            let chipClass = 'chip chip-entity chip-default'; // Default class
+                            const labelLower = ent.label.toLowerCase();
+                            if (labelLower === 'person') chipClass = 'chip chip-entity chip-person';
+                            else if (labelLower === 'org') chipClass = 'chip chip-entity chip-org';
+                            else if (labelLower === 'loc' || labelLower === 'gpe') chipClass = 'chip chip-entity chip-loc'; // Group LOC and GPE
+                            else if (labelLower === 'cardinal' || labelLower === 'ordinal' || labelLower === 'quantity' || labelLower === 'money') chipClass = 'chip chip-entity chip-cardinal'; // Group numerical
+                            // Add more else if for other specific spaCy entity types if needed
+                            
+                            entitiesHtmlContent += `<span class="${chipClass}">${ent.text} (${ent.label})</span> `;
+                        });
+                        detailsHtml += `<p><strong>Entities:</strong> ${entitiesHtmlContent}</p>`;
+                    }
+                    }
+                    nlpAnalysisDisplayEl.innerHTML += detailsHtml;
+                    nlpAnalysisDisplayEl.style.display = "block";
+                } else {
+                    nlpAnalysisDisplayEl.innerHTML += '<p>No detailed NLP analysis available.</p>';
+                    nlpAnalysisDisplayEl.style.display = "block";
+                }
+
                 waitingForPurposeMsgEl.style.display = "none";
-                startVotingBtn.disabled = false; // Enable admin to start voting
+                startVotingBtn.disabled = false;
             });
 
             startVotingBtn.onclick = () => {
@@ -457,8 +553,14 @@
                 logToThinkingProcess(
                     `System: Visitor: <strong class="highlight-neutral">${data.visitor_nickname}</strong>. Purpose: "<em style="color:blue;">${data.visitor_purpose}</em>".`
                 );
+                // Use the log_summary_string for the thinking log during this phase
+                if (data.extracted_info_log_string) {
+                     logToThinkingProcess(
+                        `System: NLP Analysis (Summary): "<em style="color:blue;">${data.extracted_info_log_string}</em>".`
+                    );
+                }
                 logToThinkingProcess(
-                    `System: Extracted Info: "<em style="color:blue;">${data.extracted_info}</em>".`
+                    `System: Policy Applied: "<strong class="highlight-neutral">${data.policy_reason || 'Default'}</strong>".`
                 );
                 logToThinkingProcess(
                     `System: Determining Voting Parameters...`
@@ -480,10 +582,9 @@
                 document.getElementById("displayVisitorPurpose").textContent =
                     data.visitor_purpose; // For residents
                 document.getElementById("displayExtractedInfo").textContent =
-                    data.extracted_info; // For residents
+                    data.extracted_info_log_string; // For residents
                 document.getElementById("totalResidentsForVote").textContent =
                     data.n;
-                // ... (reset vote counts and timer display as before) ...
                 document.getElementById("votesReceived").textContent = 0;
                 document.getElementById("allowVotes").textContent = 0;
                 document.getElementById("denyVotes").textContent = 0;
