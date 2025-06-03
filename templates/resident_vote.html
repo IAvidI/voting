@@ -394,21 +394,22 @@
                 let tentativeNickname = nicknameInputEl
                     ? nicknameInputEl.value.trim()
                     : "";
-                if (!tentativeNickname) {
-                    // Keep it simple, server can assign a default if needed or send error
-                    statusMessageEl.textContent = "Nickname cannot be empty."; // Inform user
-                    return; // Don't proceed if nickname is empty
-                }
-                // Don't set myCurrentNickname here yet, wait for server confirmation via joined_successfully_waiting_role
 
-                myNicknameEl.textContent = tentativeNickname; // Optimistically display
-                nicknameSectionEl.style.display = "none"; // Hide nickname input immediately
-                roleStatusMessageEl.textContent = `Joining as ${tentativeNickname}...`;
+                if (!tentativeNickname) {
+                    statusMessageEl.textContent = "Nickname cannot be empty.";
+                    // Ensure nickname section is visible if it was somehow hidden
+                    nicknameSectionEl.style.display = "block";
+                    roleStatusMessageEl.textContent = "Enter nickname to join."; // Reset top message
+                    return;
+                }
+
+                myNicknameEl.textContent = tentativeNickname; // Optimistically display chosen name
+                roleStatusMessageEl.textContent = `Attempting to join as ${tentativeNickname}...`; // Update top message
                 statusMessageEl.textContent = ""; // Clear previous errors
 
                 socket.emit("join_session_resident", {
                     session_id: currentSessionId,
-                    nickname: tentativeNickname, // Send the nickname
+                    nickname: tentativeNickname,
                 });
             }
 
@@ -454,11 +455,14 @@
             });
 
             socket.on("joined_successfully_waiting_role", (data) => {
-                myCurrentNickname = data.nickname; // Set/confirm from server
+                myCurrentNickname = data.nickname;
                 myNicknameEl.textContent = myCurrentNickname;
-                currentUserRole = "unassigned"; // Still waiting for role *assignment*
-                updateUIVisibility(); // This will now hide nicknameSection because myCurrentNickname is set
-                statusMessageEl.textContent = ""; // Clear "Joining..." or previous errors
+                currentUserRole = "unassigned";
+
+                nicknameSectionEl.style.display = "none"; // SUCCESS: Now hide the nickname input section
+
+                updateUIVisibility();
+                statusMessageEl.textContent = "";
             });
 
             socket.on("role_assigned", (data) => {
@@ -629,20 +633,57 @@
 
             socket.on("nickname_taken_error", (data) => {
                 currentUserRole = "unassigned";
-                myCurrentNickname = ""; // Clear the bad nickname
-                myNicknameEl.textContent = ""; // Clear from display
+                // myCurrentNickname = ""; // Keep the problematic nickname in the input for editing
+                // myNicknameEl.textContent = "";
 
-                updateUIVisibility(true); // Call with error state true
+                roleStatusMessageEl.textContent =
+                    "Nickname taken! Please try another."; // Error at the top
+                statusMessageEl.textContent = `Error: ${data.message}`; // Detailed error below
 
-                roleStatusMessageEl.textContent = "Nickname Error!"; // More prominent error at top
-                statusMessageEl.textContent = `Error: ${data.message}. Please choose another.`; // Detailed error below
-
+                nicknameSectionEl.style.display = "block"; // Ensure nickname section is visible
                 const nicknameInputEl =
                     document.getElementById("nicknameInput");
                 if (nicknameInputEl) {
-                    nicknameInputEl.value = ""; // Clear the input field
+                    // nicknameInputEl.value = ""; // Let user see and edit their attempted name
                     nicknameInputEl.focus();
+                    nicknameInputEl.select();
                 }
+                // No call to updateUIVisibility(true) needed if we handle display directly here
+            });
+
+            socket.on("error", (data) => {
+                statusMessageEl.textContent = `Error: ${data.message}`; // Display the error at the bottom
+
+                // Check if this error means they should be able to retry joining
+                if (
+                    data.reason === "session_not_ready_for_join" ||
+                    (data.message &&
+                        (data.message
+                            .toLowerCase()
+                            .includes("cannot join now") ||
+                            data.message
+                                .toLowerCase()
+                                .includes("voting is currently in progress")))
+                ) {
+                    roleStatusMessageEl.textContent =
+                        "Session is busy or not accepting new participants right now. You can try joining again.";
+
+                    // Ensure nickname section is visible for retry
+                    nicknameSectionEl.style.display = "block";
+                    visitorUiSectionEl.style.display = "none"; // Ensure other sections are hidden
+                    residentUiSectionEl.style.display = "none";
+
+                    // myCurrentNickname was optimistically set in joinWithNickname via myNicknameEl,
+                    // but actual join failed. We can clear myCurrentNickname JS var if needed,
+                    // or just let them re-submit. The input field still holds what they typed.
+                    // myCurrentNickname = ""; // Optional: clear the JS variable
+                    const nicknameInputEl =
+                        document.getElementById("nicknameInput");
+                    if (nicknameInputEl) {
+                        nicknameInputEl.focus(); // Focus on the input for easy retry
+                    }
+                }
+                // Other general errors will just show in statusMessageEl without changing UI layout much.
             });
 
             socket.on("disconnect", () => {

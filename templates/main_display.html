@@ -121,16 +121,37 @@
                 border-radius: 0.25rem;
                 margin: 2px 4px 2px 0; /* top right bottom left */
             }
-            .chip-intent { background-color: #007bff; } /* Blue */
-            .chip-category { background-color: #17a2b8; } /* Teal / Info */
-            .chip-target { background-color: #6f42c1; } /* Purple */
-            .chip-entity { background-color: #28a745; } /* Green */
-            .chip-default { background-color: #6c757d; } /* Gray */
-            .chip-entity.chip-person { background-color: #20c997; } /* Tealish green for PERSON */
-            .chip-entity.chip-org { background-color: #fd7e14; }    /* Orange for ORG */
-            .chip-entity.chip-loc { background-color: #ffc107; color: #212529;} /* Yellow for LOC/GPE */
-            .chip-entity.chip-cardinal { background-color: #6c757d; } /* Gray for CARDINAL/Numerical */
-            .chip-entity.chip-default { background-color: #28a745; } /* Default Green if not matched */
+            .chip-intent {
+                background-color: #007bff;
+            } /* Blue */
+            .chip-category {
+                background-color: #17a2b8;
+            } /* Teal / Info */
+            .chip-target {
+                background-color: #6f42c1;
+            } /* Purple */
+            .chip-entity {
+                background-color: #28a745;
+            } /* Green */
+            .chip-default {
+                background-color: #6c757d;
+            } /* Gray */
+            .chip-entity.chip-person {
+                background-color: #20c997;
+            } /* Tealish green for PERSON */
+            .chip-entity.chip-org {
+                background-color: #fd7e14;
+            } /* Orange for ORG */
+            .chip-entity.chip-loc {
+                background-color: #ffc107;
+                color: #212529;
+            } /* Yellow for LOC/GPE */
+            .chip-entity.chip-cardinal {
+                background-color: #6c757d;
+            } /* Gray for CARDINAL/Numerical */
+            .chip-entity.chip-default {
+                background-color: #28a745;
+            } /* Default Green if not matched */
         </style>
     </head>
     <body>
@@ -177,12 +198,29 @@
                 <!-- <div id="visitorPurposeDisplay" class="visitor-info-display">
                     Waiting for visitor...
                 </div> -->
-                <div id="visitorPurposeDisplayContainer" class="visitor-info-display">
-                    <p><strong>Visitor (<span id="visitorNameInPurposeSection">N/A</span>) Raw Purpose:</strong></p>
-                    <p><em id="rawPurposeTextDisplay">Waiting for visitor...</em></p>
-                    <div id="nlpAnalysisDisplay" class="nlp-details-container" style="display: none;">
+                <div
+                    id="visitorPurposeDisplayContainer"
+                    class="visitor-info-display"
+                >
+                    <p>
+                        <strong
+                            >Visitor (<span id="visitorNameInPurposeSection"
+                                >N/A</span
+                            >) Raw Purpose:</strong
+                        >
+                    </p>
+                    <p>
+                        <em id="rawPurposeTextDisplay"
+                            >Waiting for visitor...</em
+                        >
+                    </p>
+                    <div
+                        id="nlpAnalysisDisplay"
+                        class="nlp-details-container"
+                        style="display: none"
+                    >
                         <h4>NLP Analysis Details:</h4>
-                        </div>
+                    </div>
                 </div>
                 <div>
                     <label for="timerInput">Voting Timer (seconds):</label>
@@ -276,7 +314,9 @@
             <div id="outcomeArea" style="display: none">
                 <h3>Outcome:</h3>
                 <p id="finalOutcome"></p>
-                <button id="resetRoundBtn" style="display: none;">Start New Round / Reassign Roles</button> </div>
+                <button id="resetRoundBtn" style="display: none">
+                    Start New Round / Reassign Roles
+                </button>
             </div>
         </div>
 
@@ -321,9 +361,14 @@
                 "votingForVisitorName"
             );
             const resetRoundBtn = document.getElementById("resetRoundBtn");
-            const visitorNameInPurposeSectionEl = document.getElementById('visitorNameInPurposeSection');
-            const rawPurposeTextDisplayEl = document.getElementById('rawPurposeTextDisplay');
-            const nlpAnalysisDisplayEl = document.getElementById('nlpAnalysisDisplay');
+            const visitorNameInPurposeSectionEl = document.getElementById(
+                "visitorNameInPurposeSection"
+            );
+            const rawPurposeTextDisplayEl = document.getElementById(
+                "rawPurposeTextDisplay"
+            );
+            const nlpAnalysisDisplayEl =
+                document.getElementById("nlpAnalysisDisplay");
 
             function logToThinkingProcess(message, clearPrevious = false) {
                 if (clearPrevious) thinkingLog.innerHTML = "";
@@ -335,22 +380,27 @@
             }
 
             function renderAllUsersList() {
-                allUsersListEl.innerHTML = ""; 
+                allUsersListEl.innerHTML = "";
                 let userCount = 0;
-                const currentVisitorSidFromDataset = assignedVisitorNameEl.dataset.visitorSid; // Read from dataset
+                const currentVisitorSidFromDataset =
+                    assignedVisitorNameEl.dataset.visitorSid; // Read from dataset
 
                 for (const sid in allUsersData) {
                     userCount++;
                     const userData = allUsersData[sid];
                     const listItem = document.createElement("li");
-                    let roleText = userData.role === 'unassigned' ? '(Unassigned)' : `(${userData.role})`;
-                    if (sid === currentVisitorSidFromDataset) { // Compare with SID from dataset
+                    let roleText =
+                        userData.role === "unassigned"
+                            ? "(Unassigned)"
+                            : `(${userData.role})`;
+                    if (sid === currentVisitorSidFromDataset) {
+                        // Compare with SID from dataset
                         roleText = `<strong class="highlight-green">(Visitor)</strong>`;
                     }
-                    
+
                     listItem.innerHTML = `<span>${userData.nickname} ${roleText}</span>`;
 
-                    if (sid !== currentVisitorSidFromDataset) { 
+                    if (sid !== currentVisitorSidFromDataset) {
                         const assignBtn = document.createElement("button");
                         assignBtn.textContent = "Make Visitor";
                         assignBtn.dataset.sid = sid;
@@ -371,9 +421,11 @@
                     allUsersListEl.appendChild(listItem);
                 }
                 connectedUsersCountEl.textContent = userCount;
-                document.querySelectorAll(".assign-visitor-btn").forEach((btn) => {
-                    btn.disabled = !!currentVisitorSidFromDataset; // Disable if visitor_sid (from dataset) is set
-                });
+                document
+                    .querySelectorAll(".assign-visitor-btn")
+                    .forEach((btn) => {
+                        btn.disabled = !!currentVisitorSidFromDataset; // Disable if visitor_sid (from dataset) is set
+                    });
             }
 
             createSessionBtn.onclick = () => {
@@ -471,51 +523,73 @@
                 logToThinkingProcess(
                     `System: Visitor <strong class="highlight-neutral">${data.visitor_nickname}</strong> stated purpose: "<em style="color:blue;">${data.purpose_raw}</em>"`
                 );
-                if (data.log_summary_string) { // Use the new log summary string for thinking log
+                if (data.log_summary_string) {
+                    // Use the new log summary string for thinking log
                     logToThinkingProcess(
                         `System: NLP Processed Info (Summary): "<em style="color:blue;">${data.log_summary_string}</em>"`
                     );
                 }
 
-                visitorNameInPurposeSectionEl.textContent = data.visitor_nickname;
+                visitorNameInPurposeSectionEl.textContent =
+                    data.visitor_nickname;
                 rawPurposeTextDisplayEl.textContent = data.purpose_raw;
 
-                nlpAnalysisDisplayEl.innerHTML = '<h4>NLP Analysis Details:</h4>'; // Clear previous and add title
+                nlpAnalysisDisplayEl.innerHTML =
+                    "<h4>NLP Analysis Details:</h4>"; // Clear previous and add title
                 const summary = data.nlp_summary_for_display;
 
                 if (summary) {
-                    let detailsHtml = '';
+                    let detailsHtml = "";
                     if (summary.intent) {
                         detailsHtml += `<p><strong>Intent:</strong> <span class="chip chip-intent">${summary.intent}</span></p>`;
                     }
                     if (summary.visitor_category) {
                         detailsHtml += `<p><strong>Category:</strong> <span class="chip chip-category">${summary.visitor_category}</span></p>`;
                     }
-                    if (summary.target_entity && summary.target_entity !== 'N/A') {
+                    if (
+                        summary.target_entity &&
+                        summary.target_entity !== "N/A"
+                    ) {
                         detailsHtml += `<p><strong>Target:</strong> <span class="chip chip-target">${summary.target_entity}</span></p>`;
                     }
 
                     if (summary.entities && summary.entities.length > 0) {
                         if (summary.entities && summary.entities.length > 0) {
-                        let entitiesHtmlContent = ""; // Build the content for the <p> tag
-                        summary.entities.forEach(ent => { // ent is an object like {text: 'Mike', label: 'PERSON'}
-                            let chipClass = 'chip chip-entity chip-default'; // Default class
-                            const labelLower = ent.label.toLowerCase();
-                            if (labelLower === 'person') chipClass = 'chip chip-entity chip-person';
-                            else if (labelLower === 'org') chipClass = 'chip chip-entity chip-org';
-                            else if (labelLower === 'loc' || labelLower === 'gpe') chipClass = 'chip chip-entity chip-loc'; // Group LOC and GPE
-                            else if (labelLower === 'cardinal' || labelLower === 'ordinal' || labelLower === 'quantity' || labelLower === 'money') chipClass = 'chip chip-entity chip-cardinal'; // Group numerical
-                            // Add more else if for other specific spaCy entity types if needed
-                            
-                            entitiesHtmlContent += `<span class="${chipClass}">${ent.text} (${ent.label})</span> `;
-                        });
-                        detailsHtml += `<p><strong>Entities:</strong> ${entitiesHtmlContent}</p>`;
-                    }
+                            let entitiesHtmlContent = ""; // Build the content for the <p> tag
+                            summary.entities.forEach((ent) => {
+                                // ent is an object like {text: 'Mike', label: 'PERSON'}
+                                let chipClass = "chip chip-entity chip-default"; // Default class
+                                const labelLower = ent.label.toLowerCase();
+                                if (labelLower === "person")
+                                    chipClass = "chip chip-entity chip-person";
+                                else if (labelLower === "org")
+                                    chipClass = "chip chip-entity chip-org";
+                                else if (
+                                    labelLower === "loc" ||
+                                    labelLower === "gpe"
+                                )
+                                    chipClass = "chip chip-entity chip-loc";
+                                // Group LOC and GPE
+                                else if (
+                                    labelLower === "cardinal" ||
+                                    labelLower === "ordinal" ||
+                                    labelLower === "quantity" ||
+                                    labelLower === "money"
+                                )
+                                    chipClass =
+                                        "chip chip-entity chip-cardinal"; // Group numerical
+                                // Add more else if for other specific spaCy entity types if needed
+
+                                entitiesHtmlContent += `<span class="${chipClass}">${ent.text} (${ent.label})</span> `;
+                            });
+                            detailsHtml += `<p><strong>Entities:</strong> ${entitiesHtmlContent}</p>`;
+                        }
                     }
                     nlpAnalysisDisplayEl.innerHTML += detailsHtml;
                     nlpAnalysisDisplayEl.style.display = "block";
                 } else {
-                    nlpAnalysisDisplayEl.innerHTML += '<p>No detailed NLP analysis available.</p>';
+                    nlpAnalysisDisplayEl.innerHTML +=
+                        "<p>No detailed NLP analysis available.</p>";
                     nlpAnalysisDisplayEl.style.display = "block";
                 }
 
@@ -555,12 +629,14 @@
                 );
                 // Use the log_summary_string for the thinking log during this phase
                 if (data.extracted_info_log_string) {
-                     logToThinkingProcess(
+                    logToThinkingProcess(
                         `System: NLP Analysis (Summary): "<em style="color:blue;">${data.extracted_info_log_string}</em>".`
                     );
                 }
                 logToThinkingProcess(
-                    `System: Policy Applied: "<strong class="highlight-neutral">${data.policy_reason || 'Default'}</strong>".`
+                    `System: Policy Applied: "<strong class="highlight-neutral">${
+                        data.policy_reason || "Default"
+                    }</strong>".`
                 );
                 logToThinkingProcess(
                     `System: Determining Voting Parameters...`
@@ -649,28 +725,32 @@
 
             resetRoundBtn.onclick = () => {
                 if (currentSessionId) {
-                    logToThinkingProcess("Admin: Requesting to start a new round/reassign roles.");
-                    socket.emit('admin_reset_round', { session_id: currentSessionId });
+                    logToThinkingProcess(
+                        "Admin: Requesting to start a new round/reassign roles."
+                    );
+                    socket.emit("admin_reset_round", {
+                        session_id: currentSessionId,
+                    });
                     resetRoundBtn.style.display = "none"; // Hide it after clicking
                 }
             };
 
             socket.on("round_was_reset", (data) => {
                 logToThinkingProcess(`System: ${data.message}`);
-                
+
                 allUsersData = data.all_users; // Update with potentially new roles (all unassigned)
-                
+
                 // Reset UI elements for new round
                 assignedVisitorNameEl.textContent = "None";
                 assignedVisitorNameEl.dataset.visitorSid = ""; // Clear stored visitor SID
-                
+
                 visitorPurposeDisplayEl.textContent = "Waiting for visitor...";
                 visitorInteractionDisplaySection.style.display = "none"; // Hide visitor purpose section
                 waitingForPurposeMsgEl.style.display = "none";
 
                 votingStatusDiv.style.display = "none"; // Hide old voting status
-                outcomeAreaDiv.style.display = "none";  // Hide old outcome
-                
+                outcomeAreaDiv.style.display = "none"; // Hide old outcome
+
                 roleAssignmentSection.style.display = "block"; // Ensure role assignment is visible
                 renderAllUsersList(); // This will re-enable "Make Visitor" buttons as visitor_sid is now null
 

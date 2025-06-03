@@ -1,5 +1,5 @@
-from flask import Flask, render_template, request, session
-from flask_socketio import SocketIO, emit, join_room, leave_room
+from flask import Flask, render_template, request  
+from flask_socketio import SocketIO, emit, join_room
 import qrcode
 import io
 import base64
@@ -129,6 +129,7 @@ def server_tally_votes(session_id):
 
             # Calculate 'no_response' votes based on 'residents_voting' and actual votes received
             responded_sids = set(current_session['votes'].keys())
+            
             # Voters are those in residents_voting at the START of the voting round.
             # n_voters was set when voting started.
             expected_voter_sids = set(current_session['residents_voting'].keys()) # These are the SIDs of those who *should* have voted
@@ -469,31 +470,39 @@ def handle_user_join(data): # Changed function name
     if session_id in active_sessions:
         current_session = active_sessions[session_id]
 
-        if request.sid in current_session['all_connected_users']: # Already connected (e.g. refresh)
-            user_data = current_session['all_connected_users'][request.sid]
-            emit('joined_successfully_waiting_role', {'nickname': user_data['nickname'], 'session_id': session_id, 'message': 'Reconnected.'})
-            socketio.emit('role_assigned', { # Resend current role
-                'your_role': user_data['role'],
-                'visitor_nickname': current_session.get('visitor_nickname')
-            }, room=request.sid)
-            return
+        if current_session['status'] == 'role_assignment':
 
-        for user_data_val in current_session['all_connected_users'].values(): # Check by value
-            if user_data_val['nickname'] == nickname:
-                emit('nickname_taken_error', {'message': f"Nickname '{nickname}' is already taken."})
+            if request.sid in current_session['all_connected_users']: # Already connected (e.g. refresh)
+                user_data = current_session['all_connected_users'][request.sid]
+                emit('joined_successfully_waiting_role', {'nickname': user_data['nickname'], 'session_id': session_id, 'message': 'Reconnected.'})
+                socketio.emit('role_assigned', { # Resend current role
+                    'your_role': user_data['role'],
+                    'visitor_nickname': current_session.get('visitor_nickname')
+                }, room=request.sid)
                 return
-        
-        join_room(session_id) # User joins the general session room
-        current_session['all_connected_users'][request.sid] = {'nickname': nickname, 'role': 'unassigned'}
-        
-        emit('user_joined_for_roles', { # To Admin
-            'sid': request.sid,
-            'nickname': nickname,
-            'all_users': current_session['all_connected_users']
-        }, room=current_session['admin_sid'])
-        
-        emit('joined_successfully_waiting_role', {'nickname': nickname, 'session_id': session_id}) # To joining client
-        print(f"User {nickname} ({request.sid}) joined session {session_id}. Awaiting role.")
+
+            for user_data_val in current_session['all_connected_users'].values(): # Check by value
+                if user_data_val['nickname'] == nickname:
+                    emit('nickname_taken_error', {'message': f"Nickname '{nickname}' is already taken."})
+                    return
+            
+            join_room(session_id) # User joins the general session room
+            current_session['all_connected_users'][request.sid] = {'nickname': nickname, 'role': 'unassigned'}
+            
+            emit('user_joined_for_roles', { # To Admin
+                'sid': request.sid,
+                'nickname': nickname,
+                'all_users': current_session['all_connected_users']
+            }, room=current_session['admin_sid'])
+            
+            emit('joined_successfully_waiting_role', {'nickname': nickname, 'session_id': session_id}) # To joining client
+            print(f"User {nickname} ({request.sid}) joined session {session_id}. Awaiting role.")
+        else:
+            emit('error', {
+                'message': f"Cannot join at this time (session status is '{current_session['status']}'). Please wait for role assignment phase.",
+                'reason': 'session_not_ready_for_join' # Add a reason code
+            })
+            return
     else:
         emit('error', {'message': 'Session ID not found.'})
 
