@@ -647,6 +647,11 @@
                 logToThinkingProcess(
                     `System: Votes needed for Approval (t) = <strong class="highlight-neutral">${data.t}</strong>.`
                 );
+                // --- SSS Log for start ---
+                if (data.sss_status_log) {
+                    logToThinkingProcess(`System: ${data.sss_status_log}`);
+                }
+                // --- End SSS Log ---
                 logToThinkingProcess(
                     `System: Initiating Vote for ${data.n} residents. Timer: <strong class="highlight-neutral">${data.timer_duration}s</strong>.`
                 );
@@ -773,9 +778,18 @@
                 logToThinkingProcess(
                     `System: Allow: ${data.vote_counts.allow}, Deny: ${data.vote_counts.deny}, Abstain: ${data.vote_counts.abstain}, No Response: ${data.vote_counts.no_response}.`
                 );
-                logToThinkingProcess(
-                    `System: Reconstructing Decision: Comparing Allow votes (${data.vote_counts.allow}) with threshold (t = ${data.t}).`
-                );
+                // --- SSS Log for tally ---
+                if (data.sss_reconstruction_log) {
+                    logToThinkingProcess(
+                        `System: ${data.sss_reconstruction_log}`
+                    );
+                } else {
+                    logToThinkingProcess(
+                        // Fallback if SSS log isn't there
+                        `System: Reconstructing Decision: Comparing Allow votes (${data.vote_counts.allow}) with threshold (t = ${data.t}).`
+                    );
+                }
+                // --- End SSS Log ---
 
                 finalOutcomeEl.textContent = data.outcome;
                 if (data.outcome === "Access Granted") {

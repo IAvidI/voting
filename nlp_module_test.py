@@ -1,5 +1,5 @@
 import json # For pretty printing dictionaries
-from app import process_visitor_purpose_nlp, nlp as spacy_nlp_model # Import the function and the loaded nlp model
+from nlp_module import process_visitor_purpose_nlp, NLP_MODEL as spacy_nlp_model
 
 def print_structured_output(text, output):
     print("-" * 50)

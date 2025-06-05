@@ -5,6 +5,9 @@ import io
 import base64
 import uuid
 import threading    # For the timer
+from Crypto.Protocol.SecretSharing import Shamir
+import hashlib # For creating a 16-byte secret from our string
+import uuid
 
 # Import functions from your new modules
 from nlp_module import process_visitor_purpose_nlp
@@ -48,33 +51,99 @@ def server_tally_votes(session_id):
             current_session['status'] = 'tallied'
             print(f"Session {session_id} status changed to 'tallied'")
 
+            # --- SSS Reconstruction Logic ---
+            sss_reconstruction_log = ""
+            # Check if SSS was properly initialized for this round
+            sss_initialized_properly = (current_session.get('sss_actual_secret_bytes') and \
+                                        current_session.get('sss_shares_map') is not None and \
+                                        current_session['n_voters'] > 0 and \
+                                        current_session['t_threshold'] > 0)
+
+            if sss_initialized_properly:
+                allow_voter_sids = current_session['contributed_shares_sids']
+                num_allow_votes = len(allow_voter_sids)
+                threshold_k = current_session['t_threshold']
+                sss_reconstruction_log = f"SSS: Received {num_allow_votes} 'Allow' votes (shares). Threshold k={threshold_k}. "
+
+                if num_allow_votes >= threshold_k:
+                    shares_for_reconstruction_tuples = []
+                    for sid in allow_voter_sids:
+                        if sid in current_session['sss_shares_map']:
+                            shares_for_reconstruction_tuples.append(current_session['sss_shares_map'][sid])
+                    
+                    # PyCryptodome's Shamir.combine needs *at least* k shares.
+                    # If more are provided, it should still work (it selects k).
+                    # For strictness as per some docs ("exactly k"), we can slice:
+                    if len(shares_for_reconstruction_tuples) >= threshold_k:
+                        selected_shares = shares_for_reconstruction_tuples[:threshold_k] # Take exactly k shares if more available
+                        try:
+                            reconstructed_secret_bytes = Shamir.combine(selected_shares) # ssss=False is default
+                            
+                            if reconstructed_secret_bytes == current_session['sss_actual_secret_bytes']:
+                                current_session['outcome'] = 'Access Granted' 
+                                sss_reconstruction_log += "Secret RECONSTRUCTED successfully!"
+                                print(f"SSS: Secret for session {session_id} reconstructed successfully!")
+                            else:
+                                current_session['outcome'] = 'Access Denied'
+                                sss_reconstruction_log += "Secret Mismatch after reconstruction!"
+                                print(f"SSS ERROR: Reconstructed secret does not match original for session {session_id}!")
+                        except Exception as e: 
+                            current_session['outcome'] = 'Access Denied'
+                            sss_reconstruction_log += f"Error during SSS reconstruction: {str(e)}"
+                            print(f"SSS ERROR during reconstruction for session {session_id}: {e}")
+                    else: 
+                        current_session['outcome'] = 'Access Denied'
+                        sss_reconstruction_log += "Not enough distinct shares collected for reconstruction attempt."
+                else:
+                    current_session['outcome'] = 'Access Denied'
+                    sss_reconstruction_log += "Not enough 'Allow' votes to meet SSS threshold."
+            else: # SSS not applicable or had init error, use fallback
+                sss_reconstruction_log = current_session.get('sss_status_log', "SSS: Not used or error in setup.") + " "
+                if current_session['n_voters'] == 0 and current_session['t_threshold'] == 0:
+                    # ... (your existing auto-decision logic for no voters) ...
+                    if current_session.get('policy_applied_reason','').endswith("(auto-decision)."): # Check your policy reason string
+                        current_session['outcome'] = 'Access Granted'
+                        sss_reconstruction_log += "Outcome by policy (no voters)."
+                    else:
+                        current_session['outcome'] = 'Access Denied'
+                        sss_reconstruction_log += "Outcome by policy (no voters, default deny)."
+                elif current_session['vote_counts']['allow'] >= current_session['t_threshold']:
+                     current_session['outcome'] = 'Access Granted'
+                     sss_reconstruction_log += "Outcome by simple vote tally (SSS conditions not met)."
+                else:
+                     current_session['outcome'] = 'Access Denied'
+                     sss_reconstruction_log += "Outcome by simple vote tally (SSS conditions not met)."
+            current_session['sss_final_status_log'] = sss_reconstruction_log
+            # --- END SSS ---
+
             # Calculate 'no_response' votes based on 'residents_voting' and actual votes received
-            responded_sids = set(current_session['votes'].keys())
+            # responded_sids = set(current_session['votes'].keys())
             
-            # Voters are those in residents_voting at the START of the voting round.
-            # n_voters was set when voting started.
-            expected_voter_sids = set(current_session['residents_voting'].keys()) # These are the SIDs of those who *should* have voted
+            # # Voters are those in residents_voting at the START of the voting round.
+            # # n_voters was set when voting started.
+            # expected_voter_sids = set(current_session['residents_voting'].keys()) # These are the SIDs of those who *should* have voted
             
-            # This calculation of no_response was faulty in previous user version.
-            # Correct approach: no_response_count = n_voters_at_start_of_round - number_of_votes_actually_cast
-            # The current_session['vote_counts']['no_response'] is decremented upon vote.
-            # If timer expires, those who haven't voted remain in 'no_response' count.
-            # Let's ensure vote_counts['no_response'] is correct.
-            # It's initialized to n_voters and decremented per vote. So it should be fine.
+            # # This calculation of no_response was faulty in previous user version.
+            # # Correct approach: no_response_count = n_voters_at_start_of_round - number_of_votes_actually_cast
+            # # The current_session['vote_counts']['no_response'] is decremented upon vote.
+            # # If timer expires, those who haven't voted remain in 'no_response' count.
+            # # Let's ensure vote_counts['no_response'] is correct.
+            # # It's initialized to n_voters and decremented per vote. So it should be fine.
 
-            if current_session['vote_counts']['allow'] >= current_session['t_threshold']: # Use t_threshold
-                current_session['outcome'] = 'Access Granted'
-            else:
-                current_session['outcome'] = 'Access Denied'
+            # if current_session['vote_counts']['allow'] >= current_session['t_threshold']: # Use t_threshold
+            #     current_session['outcome'] = 'Access Granted'
+            # else:
+            #     current_session['outcome'] = 'Access Denied'
 
-            print(f"Session {session_id}: Votes tallied. Outcome: {current_session['outcome']}")
+            print(f"Session {session_id}: Votes tallied. Outcome: {current_session['outcome']}. SSS Log: {sss_reconstruction_log}")
             
             # Notify admin display
             socketio.emit('votes_tallied', {
                 'vote_counts': current_session['vote_counts'],
                 'outcome': current_session['outcome'],
                 'n': current_session['n_voters'], # Use n_voters
-                't': current_session['t_threshold'] # Use t_threshold
+                't': current_session['t_threshold'], # Use t_threshold
+                'sss_reconstruction_log': sss_reconstruction_log # Send SSS log to admin
             }, room=current_session['admin_sid']) # Target admin specifically
 
             # Notify residents (voters)
@@ -118,7 +187,10 @@ def handle_create_session():
         'outcome': '',
         'timer_object': None,
         'timer_duration': 0,
-        'policy_applied_reason': '' # For logging policy
+        'policy_applied_reason': '', # For logging policy
+        'sss_secret_bytes': None, # Store secret as bytes
+        'sss_shares_map': {},     # Stores {resident_sid: (idx, share_int_value)}
+        'contributed_shares_sids': set() 
     }
     join_room(session_id)
     base_url = request.host_url 
@@ -261,12 +333,56 @@ def handle_start_voting_round(data):
         )
         current_session['t_threshold'] = policy_result['t_threshold']
         current_session['policy_applied_reason'] = policy_result['policy_reason']
-        
+
         current_session['votes'] = {} 
         current_session['vote_counts'] = {'allow': 0, 'deny': 0, 'abstain': 0, 'no_response': current_session['n_voters']}
         current_session['outcome'] = ''
         current_session['timer_duration'] = timer_duration
+        current_session['contributed_shares_sids'] = set() # Reset for new round
+
+        # --- SSS: Generate Secret and Split Shares ---
+        descriptive_secret_string = f"ACCESS_GRANTED_TOKEN_FOR_{current_session['visitor_nickname']}_{uuid.uuid4().hex[:6]}"
+        # Create a 16-byte secret by hashing the descriptive string
+        current_session['sss_actual_secret_bytes'] = hashlib.sha256(descriptive_secret_string.encode('utf-8')).digest()[:16]
+        current_session['sss_descriptive_secret'] = descriptive_secret_string # For logging/verification if needed
         
+        current_session['sss_shares_map'] = {} # Stores {resident_sid: (idx_int, share_bytes)}
+        
+        sss_log_message = f"SSS: Generated 16-byte secret for '{current_session['visitor_nickname']}'. "
+        
+        k_threshold_for_sss = current_session['t_threshold']
+        n_shares_for_sss = current_session['n_voters']
+
+        if n_shares_for_sss > 0 and k_threshold_for_sss > 0 and k_threshold_for_sss <= n_shares_for_sss:
+            try:
+                # Shamir.split(k, n, secret_16_bytes)
+                shares_tuples = Shamir.split(k_threshold_for_sss, 
+                                             n_shares_for_sss, 
+                                             current_session['sss_actual_secret_bytes']) 
+                                             # ssss=False is default
+                
+                resident_sids_list = list(current_session['residents_voting'].keys())
+                for i, sid in enumerate(resident_sids_list):
+                    if i < len(shares_tuples): 
+                        current_session['sss_shares_map'][sid] = shares_tuples[i] # Share is (idx, 16_byte_share_value)
+                
+                sss_log_message += (f"Split into {len(current_session['sss_shares_map'])} shares "
+                                    f"(threshold k={k_threshold_for_sss}, n={n_shares_for_sss}).")
+                print(sss_log_message)
+            except Exception as e:
+                sss_log_message += f"Error splitting secret: {str(e)}. SSS might not be used this round."
+                print(sss_log_message)
+                current_session['sss_shares_map'] = None 
+        elif n_shares_for_sss == 0:
+            sss_log_message += "No voters, SSS not applicable."
+            print(sss_log_message)
+        else: # Invalid k or n for SSS (e.g. k=0, or k > n)
+            sss_log_message += (f"Invalid SSS params (k={k_threshold_for_sss}, n={n_shares_for_sss}). SSS not used.")
+            print(sss_log_message)
+            current_session['sss_shares_map'] = None # Mark SSS as not properly initialized
+        current_session['sss_status_log'] = sss_log_message
+        # --- END SSS ---
+
         # Data for Admin Display
         emit('voting_parameters_set', {
             'n': current_session['n_voters'],
@@ -276,7 +392,8 @@ def handle_start_voting_round(data):
             'nlp_summary_for_display': current_session.get('nlp_summary_for_display'), # Also send to admin if they need to re-render chips
             'timer_duration': timer_duration,
             'visitor_nickname': current_session['visitor_nickname'],
-            'policy_reason': current_session.get('policy_applied_reason', 'Default Policy')
+            'policy_reason': current_session.get('policy_applied_reason', 'Default Policy'),
+            'sss_status_log': sss_log_message # Send SSS status to admin
         }, room=current_session['admin_sid'])
 
         # Data for Residents (Voters)
@@ -290,9 +407,9 @@ def handle_start_voting_round(data):
         
         current_session['timer_object'] = threading.Timer(timer_duration, server_tally_votes, args=[session_id])
         current_session['timer_object'].start()
-        print(f"Main_app: Voting started. Voters: {current_session['n_voters']}, Threshold: {current_session['t_threshold']}.")
+        print(f"Main_app: Voting started. Voters: {current_session['n_voters']}, Threshold: {current_session['t_threshold']}. SSS: {sss_log_message}")
     else:
-        emit('error', {'message': 'Admin/Session error or not ready for voting.'})
+        emit('error', {'message': 'Admin/Session error or not ready for voting. '})
 
 @socketio.on('tally_votes') 
 def handle_tally_votes_request(data):
@@ -336,6 +453,14 @@ def handle_admin_reset_round(data):
         current_session['structured_nlp_output'] = None
         current_session['extracted_info_display'] = ''
         current_session['policy_applied_reason'] = ''
+        # --- SSS Reset ---
+        current_session['sss_actual_secret_bytes'] = None # Changed from sss_secret
+        current_session['sss_descriptive_secret'] = None # New field for original string, if you want to keep it
+        current_session['sss_shares_map'] = {}
+        current_session['contributed_shares_sids'] = set()
+        current_session['sss_status_log'] = ''
+        current_session['sss_final_status_log'] = ''
+        # --- End SSS Reset ---
 
         # Reset roles for all connected users and notify them
         for sid, user_data in current_session['all_connected_users'].items():
@@ -419,6 +544,12 @@ def handle_submit_vote(data):
                      current_session['vote_counts']['no_response'] -=1
                 
                 resident_nickname = current_session['residents_voting'][request.sid]
+
+                # --- SSS: Mark Share as Contributed ---
+                if vote_type == 'allow' and request.sid in current_session.get('sss_shares_map', {}):
+                    current_session['contributed_shares_sids'].add(request.sid)
+                    print(f"SSS: Share from {resident_nickname} ({request.sid}) marked as contributed.")
+                # --- END SSS ---
                 
                 emit('vote_update', { 
                     'sid': request.sid, # For admin to know who voted, if needed
