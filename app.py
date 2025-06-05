@@ -7,7 +7,6 @@ import uuid
 import threading    # For the timer
 from Crypto.Protocol.SecretSharing import Shamir
 import hashlib # For creating a 16-byte secret from our string
-import uuid
 
 # Import functions from your new modules
 from nlp_module import process_visitor_purpose_nlp
@@ -100,7 +99,6 @@ def server_tally_votes(session_id):
             else: # SSS not applicable or had init error, use fallback
                 sss_reconstruction_log = current_session.get('sss_status_log', "SSS: Not used or error in setup.") + " "
                 if current_session['n_voters'] == 0 and current_session['t_threshold'] == 0:
-                    # ... (your existing auto-decision logic for no voters) ...
                     if current_session.get('policy_applied_reason','').endswith("(auto-decision)."): # Check your policy reason string
                         current_session['outcome'] = 'Access Granted'
                         sss_reconstruction_log += "Outcome by policy (no voters)."
@@ -285,7 +283,8 @@ def handle_visitor_submit_purpose(data):
                 log_parts.append(f"Target: {nlp_display_summary['target_entity']}")
             if nlp_display_summary.get('entities'):
                 entities_str_log = ", ".join([f"{e['text']} ({e['label']})" for e in nlp_display_summary['entities']])
-                if entities_str_log: log_parts.append(f"Entities: {entities_str_log}")
+                if entities_str_log: 
+                    log_parts.append(f"Entities: {entities_str_log}")
             current_session['extracted_info_display_string'] = " || ".join(log_parts)
             # --- END PREPARATION ---
 
@@ -321,7 +320,8 @@ def handle_start_voting_round(data):
             emit('error', {'message': f"Cannot start voting. Current status: {current_session['status']}"})
             return
 
-        if current_session.get('timer_object'): current_session['timer_object'].cancel()
+        if current_session.get('timer_object'): 
+            current_session['timer_object'].cancel()
         
         current_session['status'] = 'voting'
         current_session['n_voters'] = len(current_session['residents_voting'])
@@ -579,13 +579,15 @@ def handle_disconnect():
     for session_id, details in list(active_sessions.items()):
         if request.sid == details.get('admin_sid'):
             print(f"Admin for session {session_id} disconnected. Cleaning up session.")
-            if details.get('timer_object'): details['timer_object'].cancel()
+            if details.get('timer_object'): 
+                details['timer_object'].cancel()
             # Notify all other users in the room before deleting session
             other_users_in_session = [sid for sid in details.get('all_connected_users', {}) if sid != request.sid]
             for user_sid in other_users_in_session:
                 socketio.emit('error', {'message': 'Admin disconnected. Session terminated.'}, room=user_sid)
             
-            if session_id in active_sessions: del active_sessions[session_id]
+            if session_id in active_sessions: 
+                del active_sessions[session_id]
             break
         
         user_disconnected_data = details.get('all_connected_users', {}).pop(request.sid, None)
@@ -652,7 +654,8 @@ def handle_disconnect():
                 # which wouldn't be changed by a disconnect unless the vote was also removed.
                 if len(details['votes']) == details['n_voters']:
                     print(f"Disconnect: All {details['n_voters']} expected votes now accounted for in session {session_id}. Triggering early tally.")
-                    if details.get('timer_object'): details['timer_object'].cancel()
+                    if details.get('timer_object'): 
+                        details['timer_object'].cancel()
                     socketio.start_background_task(server_tally_votes, session_id)
             break
 
