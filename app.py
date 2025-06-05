@@ -5,15 +5,10 @@ import io
 import base64
 import uuid
 import threading    # For the timer
-import spacy        # For the NLP
 
-# Load the spaCy model once when the app starts
-try:
-    nlp = spacy.load("en_core_web_sm")
-    print("spaCy model 'en_core_web_sm' loaded successfully.")
-except OSError:
-    print("spaCy model 'en_core_web_sm' not found. Please run: python -m spacy download en_core_web_sm")
-    nlp = None # Fallback or handle error appropriately
+# Import functions from your new modules
+from nlp_module import process_visitor_purpose_nlp
+from policy_module import calculate_dynamic_voting_parameters
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'tuturu'
@@ -38,80 +33,6 @@ def resident_join_page(session_id):
         # session['current_session_id'] = session_id # Client gets session_id via URL param, this server-side session var is not strictly needed for client
         return render_template('resident_vote.html', session_id=session_id)
     return "Session not found or inactive.", 404
-
-# --- NLP Processing Function ---
-def process_visitor_purpose_nlp(text_purpose):
-    if not nlp: # If spaCy model failed to load
-        return {
-            'raw_text': text_purpose,
-            'intent': 'nlp_unavailable',
-            'visitor_category': 'unknown',
-            'entities': [],
-            'target_entity_text': None,
-            'error': "spaCy model not loaded"
-        }
-
-    doc = nlp(text_purpose)
-    
-    # Initialize structured data
-    structured_data = {
-        'raw_text': text_purpose,
-        'intent': 'inquiry', # Default intent
-        'visitor_category': 'unknown',
-        'entities': [], # To store recognized entities {text: '...', label: '...'}
-        'target_entity_text': None # A simplified field for who/what the visitor is targeting
-    }
-
-    # 1. Named Entity Recognition (NER) with spaCy
-    target_person = None
-    target_org = None
-    for ent in doc.ents:
-        structured_data['entities'].append({'text': ent.text, 'label': ent.label_})
-        if ent.label_ == "PERSON" and not target_person: # Prioritize first person found
-            target_person = ent.text
-        if ent.label_ == "ORG" and not target_org: # Prioritize first org found
-            target_org = ent.text
-    
-    if target_person:
-        structured_data['target_entity_text'] = target_person
-    elif target_org:
-        structured_data['target_entity_text'] = target_org
-
-    # 2. Rule-based Intent and Category Classification (simple example)
-    lower_purpose = text_purpose.lower()
-
-    if "delivery" in lower_purpose or "package" in lower_purpose or "parcel" in lower_purpose:
-        structured_data['intent'] = 'delivery_request'
-        if "dhl" in lower_purpose:
-            structured_data['visitor_category'] = 'courier_dhl'
-        elif "fedex" in lower_purpose:
-            structured_data['visitor_category'] = 'courier_fedex'
-        elif "post" in lower_purpose:
-            structured_data['visitor_category'] = 'courier_post'
-        else:
-            structured_data['visitor_category'] = 'courier_generic'
-    elif "visit" in lower_purpose or "see" in lower_purpose or "meet" in lower_purpose:
-        structured_data['intent'] = 'guest_access_request'
-        if target_person: # If a person was identified by NER
-            structured_data['visitor_category'] = 'guest_for_person'
-        else:
-            structured_data['visitor_category'] = 'guest_general' # Or 'guest_unknown_target'
-    elif "maintenance" in lower_purpose or "repair" in lower_purpose or "fix" in lower_purpose or "service" in lower_purpose:
-        structured_data['intent'] = 'service_request'
-        structured_data['visitor_category'] = 'service_personnel'
-        if target_org: # e.g. "ACME Plumbing"
-             structured_data['visitor_category'] = f'service_personnel_{target_org.replace(" ", "_").lower()}'
-    elif "emergency" in lower_purpose or "help" in lower_purpose: # Basic emergency
-        structured_data['intent'] = 'emergency_access'
-        structured_data['visitor_category'] = 'emergency_services_generic' # Needs refinement
-    
-    # If visitor category is still unknown but an ORG was identified (e.g. "Acme Corp")
-    if structured_data['visitor_category'] == 'unknown' and target_org:
-        structured_data['visitor_category'] = f'org_representative_{target_org.replace(" ", "_").lower()}'
-
-
-    print(f"NLP Processed: {structured_data}")
-    return structured_data
 
 def server_tally_votes(session_id):
     with app.app_context():
@@ -269,6 +190,7 @@ def handle_visitor_submit_purpose(data):
         if request.sid == current_session.get('visitor_sid') and current_session['status'] == 'waiting_for_purpose':
             current_session['visitor_purpose_raw'] = purpose_text
             
+            # Call NLP module
             structured_nlp_data_full = process_visitor_purpose_nlp(purpose_text)
             current_session['structured_nlp_output'] = structured_nlp_data_full # Store full output for policy
             
@@ -279,7 +201,11 @@ def handle_visitor_submit_purpose(data):
                 'target_entity': structured_nlp_data_full.get('target_entity_text', 'N/A'),
                 'entities': structured_nlp_data_full.get('entities', []) # Send list of {text, label} dicts
             }
-            current_session['nlp_summary_for_display'] = nlp_display_summary # STORE THIS IN SESSION
+
+            if structured_nlp_data_full.get('entities'): # entities from NLP are already {text, label, lemma}
+                nlp_display_summary['entities'] = [{'text': ent['text'], 'label': ent['label']} for ent in structured_nlp_data_full['entities']] # Select only text and label for display
+
+            current_session['nlp_summary_for_display'] = nlp_display_summary
 
             # Create log_summary_string based on this nlp_display_summary for admin log
             log_parts = [f"Intent: {nlp_display_summary['intent']}", f"Category: {nlp_display_summary['visitor_category']}"]
@@ -328,41 +254,13 @@ def handle_start_voting_round(data):
         current_session['status'] = 'voting'
         current_session['n_voters'] = len(current_session['residents_voting'])
         
-        # --- DYNAMIC POLICY LOGIC USING NLP OUTPUT (EXAMPLE) ---
-        nlp_data = current_session.get('structured_nlp_output', {})
-        policy_reason = "Default policy: Simple majority"
-        base_t = (current_session['n_voters'] // 2) + 1 if current_session['n_voters'] > 0 else 1
-        if current_session['n_voters'] == 0: base_t = 0
-
-        current_session['t_threshold'] = base_t 
-
-        if nlp_data.get('intent') == 'delivery_request' and 'courier' in nlp_data.get('visitor_category', ''):
-            if current_session['n_voters'] >= 1: # Requires at least 1 voter for low risk
-                 current_session['t_threshold'] = 1
-                 policy_reason = f"Policy: Recognized courier ({nlp_data.get('visitor_category')}), low threshold."
-            else: # No voters
-                 current_session['t_threshold'] = 0 # Auto-allow if no voters for trusted courier? Or deny? PoC choice.
-                 policy_reason = "Policy: Recognized courier, no voters available."
-
-        elif nlp_data.get('intent') == 'guest_access_request' and nlp_data.get('visitor_category') == 'guest_general': # If "guest_unknown_target" was used
-            if current_session['n_voters'] >= 2:
-                current_session['t_threshold'] = min(current_session['n_voters'], base_t + 1 if base_t < current_session['n_voters'] else base_t)
-                policy_reason = "Policy: General guest visit, slightly increased threshold."
-            else: # if n_voters < 2, base_t is fine
-                current_session['t_threshold'] = base_t 
-                policy_reason = "Policy: General guest visit, default threshold for low voter count."
-        elif nlp_data.get('intent') == 'emergency_access':
-            current_session['t_threshold'] = 1 # For emergency, one approval might be enough
-            policy_reason = "Policy: Emergency access indicated, minimal threshold."
-
-
-        if current_session['n_voters'] > 0:
-            current_session['t_threshold'] = max(1, min(current_session['t_threshold'], current_session['n_voters']))
-        else: # No voters
-             current_session['t_threshold'] = 0 # If no voters, outcome determined by policy (e.g. deny by default or allow trusted)
-
-        current_session['policy_applied_reason'] = policy_reason
-        # --- END DYNAMIC POLICY LOGIC ---
+        # Call Policy Module
+        policy_result = calculate_dynamic_voting_parameters(
+            current_session.get('structured_nlp_output', {}), # Pass full NLP output
+            current_session['n_voters']
+        )
+        current_session['t_threshold'] = policy_result['t_threshold']
+        current_session['policy_applied_reason'] = policy_result['policy_reason']
         
         current_session['votes'] = {} 
         current_session['vote_counts'] = {'allow': 0, 'deny': 0, 'abstain': 0, 'no_response': current_session['n_voters']}
@@ -392,7 +290,7 @@ def handle_start_voting_round(data):
         
         current_session['timer_object'] = threading.Timer(timer_duration, server_tally_votes, args=[session_id])
         current_session['timer_object'].start()
-        print(f"Session {session_id}: Voting started. Voters: {current_session['n_voters']}, Threshold: {current_session['t_threshold']} (Policy: {policy_reason}).")
+        print(f"Main_app: Voting started. Voters: {current_session['n_voters']}, Threshold: {current_session['t_threshold']}.")
     else:
         emit('error', {'message': 'Admin/Session error or not ready for voting.'})
 
